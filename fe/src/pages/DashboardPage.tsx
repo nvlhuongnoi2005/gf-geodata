@@ -79,8 +79,7 @@ export function DashboardPage({ onNavigate }: { onNavigate: (page: PageKey) => v
             <Typography
               sx={{ mt: 1.4, maxWidth: 620, color: "rgba(241, 245, 249, 0.75)", lineHeight: 1.7 }}
             >
-              {t("dashboard.description")} Hỗ trợ toàn diện GeoTIFF, GeoPackage, OSM PBF, chuyển đổi
-              GDAL offline và phân quyền catalog theo chuẩn WebGIS.
+              {t("dashboard.description")}
             </Typography>
           </Box>
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1.2}>

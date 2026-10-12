@@ -474,36 +474,6 @@ export function AdminShell() {
           );
         })}
       </List>
-
-      <Box
-        sx={{
-          mt: "auto",
-          m: 1.25,
-          p: 1.5,
-          borderRadius: 2.5,
-          bgcolor: "secondary.light",
-          border: "1px solid",
-          borderColor: "secondary.main",
-        }}
-      >
-        <Stack direction="row" spacing={0.8} sx={{ alignItems: "center" }}>
-          <Box
-            className="status-pulse"
-            sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: "secondary.main" }}
-          />
-          <Typography variant="caption" sx={{ color: "secondary.dark", fontWeight: 800 }}>
-            Hạ tầng Offline Sẵn sàng
-          </Typography>
-        </Stack>
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ display: "block", mt: 0.4, fontSize: 11 }}
-        >
-          SeaweedFS S3 · GDAL 3.9 Workers
-        </Typography>
-      </Box>
-
       <Box sx={{ px: 1.25, pb: 1.25 }}>
         <Button
           fullWidth
