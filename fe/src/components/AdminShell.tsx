@@ -2,6 +2,7 @@ import { lazy, Suspense, useState, type FormEvent, type ReactNode } from "react"
 import {
   AppBar,
   Avatar,
+  Badge,
   Box,
   Button,
   Chip,
@@ -14,7 +15,10 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  Menu,
+  MenuItem,
   Paper,
+  Popover,
   Stack,
   TextField,
   Toolbar,
@@ -23,20 +27,24 @@ import {
 } from "@mui/material";
 import {
   Bell,
+  CheckCircle2,
   Database,
   ExternalLink,
-  FileStack,
+  Eye,
+  EyeOff,
   Gauge,
+  HelpCircle,
   Layers3,
   LockKeyhole,
   LogOut,
   Mail,
   MapPinned,
-  Menu,
+  Menu as MenuIcon,
   Paintbrush,
   Send,
   ShieldCheck,
   Sparkles,
+  User,
   Workflow,
 } from "lucide-react";
 import { useAuth, type LoginFailureReason } from "../auth";
@@ -45,7 +53,9 @@ import { LanguageSwitcher } from "./LanguageSwitcher";
 import { ThemeModeSwitcher } from "./AppearanceControls";
 import { DashboardPage } from "../pages/DashboardPage";
 import { DatasetsPage } from "../pages/DatasetsPage";
-import { PlaceholderPage } from "../pages/PlaceholderPage";
+import { PipelinePage } from "../pages/PipelinePage";
+import { ReleasesPage } from "../pages/ReleasesPage";
+import { AccessPage } from "../pages/AccessPage";
 
 const StyleStudioPage = lazy(async () => ({
   default: (await import("../pages/StyleStudioPage")).StyleStudioPage,
@@ -55,11 +65,13 @@ const drawerWidth = 278;
 type PageKey = "overview" | "datasets" | "pipeline" | "styles" | "releases" | "access";
 const mapLoginUrl = import.meta.env.VITE_MAP_LOGIN_URL || "http://webgis.localhost/login";
 const mapUrl = import.meta.env.VITE_WEBGIS_MAP_URL || "http://webgis.localhost/map";
+
 const loginErrorKey: Record<LoginFailureReason, TranslationKey> = {
   invalidCredentials: "login.errorInvalid",
   notAdmin: "login.errorNotAdmin",
   connection: "login.errorConnection",
 };
+
 const nav = [
   { key: "overview", label: "nav.overview", caption: "nav.overviewCaption", icon: Gauge },
   { key: "datasets", label: "nav.datasets", caption: "nav.datasetsCaption", icon: Database },
@@ -68,6 +80,7 @@ const nav = [
   { key: "releases", label: "nav.releases", caption: "nav.releasesCaption", icon: Send },
   { key: "access", label: "nav.access", caption: "nav.accessCaption", icon: ShieldCheck },
 ] as const;
+
 function BrandMark({ size = 42 }: { size?: number }) {
   return (
     <Box
@@ -78,25 +91,28 @@ function BrandMark({ size = 42 }: { size?: number }) {
         placeItems: "center",
         borderRadius: `${Math.round(size * 0.3)}px`,
         bgcolor: "primary.main",
+        boxShadow: "0 4px 12px rgba(211, 47, 47, 0.3)",
       }}
     >
       <Layers3 size={Math.round(size * 0.52)} color="#fff" />
     </Box>
   );
 }
+
 function Signal({ label }: { label: string }) {
   return (
     <Stack direction="row" spacing={0.8} sx={{ alignItems: "center" }}>
       <Box
         className="status-pulse"
-        sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: "#64e9d0" }}
+        sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: "#14b8a6" }}
       />
-      <Typography variant="caption" sx={{ color: "rgb(235 255 251 / 72%)" }}>
+      <Typography variant="caption" sx={{ color: "rgba(241, 245, 249, 0.8)", fontWeight: 600 }}>
         {label}
       </Typography>
     </Stack>
   );
 }
+
 function LoginMapArtwork() {
   const { t } = useI18n();
   return (
@@ -105,7 +121,7 @@ function LoginMapArtwork() {
       sx={{
         display: { xs: "none", md: "flex" },
         minHeight: "100dvh",
-        color: "#f6ffff",
+        color: "#f8fafc",
         position: "relative",
         overflow: "hidden",
         p: { md: 5, lg: 7 },
@@ -116,60 +132,66 @@ function LoginMapArtwork() {
       <Stack direction="row" spacing={1.4} sx={{ alignItems: "center", zIndex: 1 }}>
         <BrandMark />
         <Box>
-          <Typography sx={{ fontWeight: 800 }}>Geodata Control</Typography>
-          <Typography variant="caption" sx={{ opacity: 0.68 }}>
-            {t("brand.operations")}
+          <Typography sx={{ fontWeight: 800, fontSize: 18 }}>Geodata Control</Typography>
+          <Typography variant="caption" sx={{ opacity: 0.75, display: "block" }}>
+            Hệ thống Quản trị Bản đồ & Dữ liệu Không gian
           </Typography>
         </Box>
       </Stack>
-      <Box sx={{ position: "absolute", inset: 0, pointerEvents: "none", opacity: 0.92 }}>
+
+      <Box sx={{ position: "absolute", inset: 0, pointerEvents: "none", opacity: 0.85 }}>
         <svg viewBox="0 0 800 650" width="100%" height="100%" preserveAspectRatio="xMidYMid slice">
           <path
             className="login-route"
             d="M-60 490 C120 290, 200 540, 350 370 S570 260, 870 160"
             fill="none"
-            stroke="rgba(86, 235, 202, .55)"
-            strokeWidth="2"
+            stroke="rgba(20, 184, 166, 0.6)"
+            strokeWidth="2.5"
           />
           <path
             d="M-60 180 C140 300, 250 100, 460 250 S690 480, 870 350"
             fill="none"
-            stroke="rgba(255,255,255,.23)"
+            stroke="rgba(255, 255, 255, 0.2)"
             strokeWidth="1.5"
           />
         </svg>
       </Box>
-      <Box sx={{ position: "relative", maxWidth: 500 }}>
+
+      <Box sx={{ position: "relative", maxWidth: 520, zIndex: 1 }}>
         <Chip
-          icon={<Sparkles size={14} />}
+          icon={<Sparkles size={14} color="#5eead4" />}
           label={t("brand.geospatialOperations")}
           size="small"
-          sx={{ color: "#c9fff4", bgcolor: "rgb(96 229 202 / 12%)" }}
+          sx={{ color: "#5eead4", bgcolor: "rgba(20, 184, 166, 0.15)", fontWeight: 700 }}
         />
-        <Typography variant="h3" sx={{ mt: 2.5, maxWidth: 460, lineHeight: 1.05 }}>
+        <Typography variant="h3" sx={{ mt: 2.5, maxWidth: 480, lineHeight: 1.15, fontWeight: 800 }}>
           {t("login.artworkTitle")}
         </Typography>
         <Typography
-          sx={{ mt: 2, color: "rgb(235 255 251 / 68%)", lineHeight: 1.75, maxWidth: 440 }}
+          sx={{ mt: 2, color: "rgba(241, 245, 249, 0.75)", lineHeight: 1.75, maxWidth: 460 }}
         >
           {t("login.artworkDescription")}
         </Typography>
       </Box>
-      <Stack direction="row" spacing={3} sx={{ position: "relative" }}>
+
+      <Stack direction="row" spacing={3} sx={{ position: "relative", zIndex: 1 }}>
         <Signal label={t("brand.offlineReady")} />
-        <Signal label="SeaweedFS S3" />
-        <Signal label={t("brand.mapAuth")} />
+        <Signal label="SeaweedFS S3 Storage" />
+        <Signal label="WebGIS JWT Auth" />
       </Stack>
     </Box>
   );
 }
+
 function SessionGate({ children }: { children: ReactNode }) {
   const { isLoading, login, logout, user } = useAuth();
   const { t } = useI18n();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<TranslationKey | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
   const signIn = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setIsSubmitting(true);
@@ -178,6 +200,7 @@ function SessionGate({ children }: { children: ReactNode }) {
     setIsSubmitting(false);
     if (!result.ok) setError(loginErrorKey[result.reason]);
   };
+
   if (isLoading)
     return (
       <Box
@@ -191,13 +214,14 @@ function SessionGate({ children }: { children: ReactNode }) {
         <CircularProgress aria-label={t("common.loading")} />
       </Box>
     );
+
   if (!user)
     return (
       <Box
         sx={{
           minHeight: "100dvh",
           display: "grid",
-          gridTemplateColumns: { md: "minmax(420px, 1.08fr) minmax(500px, .92fr)" },
+          gridTemplateColumns: { md: "minmax(440px, 1.1fr) minmax(480px, 0.9fr)" },
         }}
       >
         <LoginMapArtwork />
@@ -213,35 +237,39 @@ function SessionGate({ children }: { children: ReactNode }) {
             component="form"
             onSubmit={(event) => void signIn(event)}
             elevation={0}
-            sx={{ width: "100%", maxWidth: 405, p: { xs: 0, sm: 1 }, bgcolor: "transparent" }}
+            sx={{ width: "100%", maxWidth: 420, p: { xs: 0, sm: 1 }, bgcolor: "transparent" }}
           >
             <Stack spacing={3}>
               <Box sx={{ display: { md: "none" } }}>
                 <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
                   <BrandMark size={38} />
-                  <Typography sx={{ fontWeight: 800 }}>Geodata Control</Typography>
+                  <Typography sx={{ fontWeight: 800, fontSize: 18 }}>Geodata Control</Typography>
                 </Stack>
               </Box>
               <Box>
-                <Typography variant="overline" color="primary" sx={{ fontWeight: 800 }}>
+                <Typography
+                  variant="overline"
+                  color="primary"
+                  sx={{ fontWeight: 800, letterSpacing: "0.1em" }}
+                >
                   {t("login.adminAccess")}
                 </Typography>
-                <Typography variant="h4" sx={{ mt: 0.25 }}>
+                <Typography variant="h4" sx={{ mt: 0.25, fontWeight: 800 }}>
                   {t("login.welcome")}
                 </Typography>
                 <Typography color="text.secondary" sx={{ mt: 1, lineHeight: 1.65 }}>
                   {t("login.description")}
                 </Typography>
               </Box>
-              <Stack spacing={1.75}>
+
+              <Stack spacing={2}>
                 <TextField
                   autoComplete="email"
                   label={t("login.email")}
                   type="email"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
-                  required
-                  autoFocus
+                  placeholder="admin@vht.com.vn"
                   slotProps={{
                     input: {
                       startAdornment: (
@@ -255,10 +283,9 @@ function SessionGate({ children }: { children: ReactNode }) {
                 <TextField
                   autoComplete="current-password"
                   label={t("login.password")}
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  required
                   slotProps={{
                     input: {
                       startAdornment: (
@@ -266,32 +293,48 @@ function SessionGate({ children }: { children: ReactNode }) {
                           <LockKeyhole size={18} />
                         </InputAdornment>
                       ),
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          <IconButton
+                            size="small"
+                            onClick={() => setShowPassword(!showPassword)}
+                            edge="end"
+                          >
+                            {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                          </IconButton>
+                        </InputAdornment>
+                      ),
                     },
                   }}
                 />
+
                 {error && (
                   <Box
                     sx={{
-                      px: 1.5,
-                      py: 1.2,
+                      px: 2,
+                      py: 1.5,
                       borderRadius: 2,
                       bgcolor: "error.light",
-                      color: "error.main",
-                      fontSize: 14,
+                      color: "error.dark",
+                      fontSize: 13,
+                      fontWeight: 600,
                     }}
                   >
                     {t(error)}
                   </Box>
                 )}
               </Stack>
+
               <Button variant="contained" type="submit" size="large" disabled={isSubmitting}>
                 {isSubmitting ? t("login.signingIn") : t("login.signIn")}
               </Button>
+
               <Divider>
                 <Typography variant="caption" color="text.secondary">
                   {t("login.or")}
                 </Typography>
               </Divider>
+
               <Button
                 component="a"
                 href={mapLoginUrl}
@@ -300,6 +343,7 @@ function SessionGate({ children }: { children: ReactNode }) {
               >
                 {t("login.openWebgisLogin")}
               </Button>
+
               <Typography
                 variant="caption"
                 color="text.secondary"
@@ -312,12 +356,13 @@ function SessionGate({ children }: { children: ReactNode }) {
         </Box>
       </Box>
     );
+
   if (user.role !== "admin")
     return (
       <Box sx={{ minHeight: "100dvh", display: "grid", placeItems: "center", p: 3 }}>
         <Paper sx={{ maxWidth: 460, p: 4, textAlign: "center" }}>
-          <ShieldCheck size={34} color="#df1743" />
-          <Typography variant="h5" sx={{ mt: 2 }}>
+          <ShieldCheck size={38} color="#d32f2f" style={{ margin: "0 auto" }} />
+          <Typography variant="h5" sx={{ mt: 2, fontWeight: 800 }}>
             {t("login.noAccess")}
           </Typography>
           <Typography color="text.secondary" sx={{ mt: 1 }}>
@@ -329,13 +374,15 @@ function SessionGate({ children }: { children: ReactNode }) {
         </Paper>
       </Box>
     );
+
   return <>{children}</>;
 }
+
 function PageLoading() {
   const { t } = useI18n();
   return (
-    <Box sx={{ minHeight: 360, display: "grid", placeItems: "center" }}>
-      <Stack spacing={1.25} sx={{ alignItems: "center" }}>
+    <Box sx={{ minHeight: 380, display: "grid", placeItems: "center" }}>
+      <Stack spacing={1.5} sx={{ alignItems: "center" }}>
         <CircularProgress aria-label={t("common.loading")} />
         <Typography variant="body2" color="text.secondary">
           {t("common.loading")}
@@ -344,12 +391,19 @@ function PageLoading() {
     </Box>
   );
 }
+
 export function AdminShell() {
   const [activePage, setActivePage] = useState<PageKey>("overview");
   const [mobileOpen, setMobileOpen] = useState(false);
   const { logout, user } = useAuth();
   const { t } = useI18n();
+
+  // Header popovers
+  const [notificationAnchor, setNotificationAnchor] = useState<null | HTMLElement>(null);
+  const [userMenuAnchor, setUserMenuAnchor] = useState<null | HTMLElement>(null);
+
   const active = nav.find((item) => item.key === activePage)!;
+
   const drawer = (
     <Box
       className="app-drawer"
@@ -365,14 +419,16 @@ export function AdminShell() {
         <Stack direction="row" spacing={1.2} sx={{ alignItems: "center" }}>
           <BrandMark size={38} />
           <Box>
-            <Typography sx={{ fontWeight: 800 }}>Geodata Control</Typography>
+            <Typography sx={{ fontWeight: 800, fontSize: 16 }}>Geodata Control</Typography>
             <Typography variant="caption" color="text.secondary">
-              {t("brand.platformOffline")}
+              VHT Spatial Engine · Offline
             </Typography>
           </Box>
         </Stack>
       </Box>
+
       <Divider />
+
       <Typography
         variant="overline"
         sx={{
@@ -387,6 +443,7 @@ export function AdminShell() {
       >
         {t("brand.workspace")}
       </Typography>
+
       <List sx={{ px: 1.15, py: 0 }}>
         {nav.map((item) => {
           const Icon = item.icon;
@@ -398,9 +455,9 @@ export function AdminShell() {
                 setActivePage(item.key);
                 setMobileOpen(false);
               }}
-              sx={{ mb: 0.45, borderRadius: 2.5, py: 1.05 }}
+              sx={{ mb: 0.45, borderRadius: 2, py: 1.05 }}
             >
-              <ListItemIcon sx={{ minWidth: 39 }}>
+              <ListItemIcon sx={{ minWidth: 38 }}>
                 <Icon size={19} />
               </ListItemIcon>
               <ListItemText
@@ -417,15 +474,16 @@ export function AdminShell() {
           );
         })}
       </List>
+
       <Box
         sx={{
           mt: "auto",
           m: 1.25,
           p: 1.5,
-          borderRadius: 3,
+          borderRadius: 2.5,
           bgcolor: "secondary.light",
           border: "1px solid",
-          borderColor: "divider",
+          borderColor: "secondary.main",
         }}
       >
         <Stack direction="row" spacing={0.8} sx={{ alignItems: "center" }}>
@@ -434,16 +492,24 @@ export function AdminShell() {
             sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: "secondary.main" }}
           />
           <Typography variant="caption" sx={{ color: "secondary.dark", fontWeight: 800 }}>
-            {t("sidebar.ready")}
+            Hạ tầng Offline Sẵn sàng
           </Typography>
         </Stack>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: "block", mt: 0.4, fontSize: 11 }}
+        >
+          SeaweedFS S3 · GDAL 3.9 Workers
+        </Typography>
       </Box>
+
       <Box sx={{ px: 1.25, pb: 1.25 }}>
         <Button
           fullWidth
           variant="outlined"
           color="inherit"
-          startIcon={<LogOut size={17} />}
+          startIcon={<LogOut size={16} />}
           onClick={() => void logout()}
         >
           {t("common.logout")}
@@ -451,9 +517,11 @@ export function AdminShell() {
       </Box>
     </Box>
   );
+
   return (
     <SessionGate>
       <Box sx={{ display: "flex", minHeight: "100dvh", bgcolor: "background.default" }}>
+        {/* Navigation Sidebar Drawer */}
         <Box component="nav" sx={{ width: { md: drawerWidth }, flexShrink: { md: 0 } }}>
           <Drawer
             variant="temporary"
@@ -478,6 +546,8 @@ export function AdminShell() {
             {drawer}
           </Drawer>
         </Box>
+
+        {/* Main Content Area */}
         <Box component="main" sx={{ flexGrow: 1, minWidth: 0 }}>
           <AppBar
             position="sticky"
@@ -498,7 +568,7 @@ export function AdminShell() {
                   onClick={() => setMobileOpen(true)}
                   sx={{ display: { md: "none" } }}
                 >
-                  <Menu />
+                  <MenuIcon />
                 </IconButton>
                 <Box>
                   <Typography
@@ -508,24 +578,28 @@ export function AdminShell() {
                   >
                     {t("brand.workspace")}
                   </Typography>
-                  <Typography sx={{ fontWeight: 750, fontSize: 15 }}>{t(active.label)}</Typography>
+                  <Typography sx={{ fontWeight: 800, fontSize: 16 }}>{t(active.label)}</Typography>
                 </Box>
               </Stack>
+
               <Stack direction="row" spacing={1.2} sx={{ alignItems: "center" }}>
                 <LanguageSwitcher />
                 <ThemeModeSwitcher />
-                <Tooltip title={t("common.notificationsUnavailable")}>
-                  <span>
-                    <IconButton
-                      aria-label={t("common.notificationsUnavailable")}
-                      disabled
-                      size="small"
-                      sx={{ border: "1px solid", borderColor: "divider" }}
-                    >
+
+                {/* Notifications Bell */}
+                <Tooltip title="Thông báo hệ thống">
+                  <IconButton
+                    size="small"
+                    onClick={(e) => setNotificationAnchor(e.currentTarget)}
+                    sx={{ border: "1px solid", borderColor: "divider" }}
+                  >
+                    <Badge badgeContent={3} color="primary">
                       <Bell size={18} />
-                    </IconButton>
-                  </span>
+                    </Badge>
+                  </IconButton>
                 </Tooltip>
+
+                {/* Open WebGIS Client button */}
                 <Button
                   component="a"
                   href={mapUrl}
@@ -538,13 +612,20 @@ export function AdminShell() {
                 >
                   {t("common.openWebgis")}
                 </Button>
-                <Stack direction="row" spacing={1} sx={{ alignItems: "center", pl: 0.4 }}>
+
+                {/* User Avatar Menu Trigger */}
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  sx={{ alignItems: "center", pl: 0.5, cursor: "pointer" }}
+                  onClick={(e) => setUserMenuAnchor(e.currentTarget)}
+                >
                   <Avatar
                     sx={{
-                      width: 34,
-                      height: 34,
+                      width: 36,
+                      height: 36,
                       bgcolor: "primary.light",
-                      color: "primary.dark",
+                      color: "primary.main",
                       fontSize: 14,
                       fontWeight: 800,
                     }}
@@ -563,35 +644,105 @@ export function AdminShell() {
               </Stack>
             </Toolbar>
           </AppBar>
+
+          {/* Notifications Popover */}
+          <Popover
+            open={Boolean(notificationAnchor)}
+            anchorEl={notificationAnchor}
+            onClose={() => setNotificationAnchor(null)}
+            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+            transformOrigin={{ vertical: "top", horizontal: "right" }}
+            slotProps={{ paper: { sx: { width: 340, p: 2, borderRadius: 2.5 } } }}
+          >
+            <Stack spacing={1.5}>
+              <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+                  Thông báo hệ thống (3)
+                </Typography>
+                <Chip label="Mới" size="small" color="primary" sx={{ height: 20, fontSize: 10 }} />
+              </Stack>
+              <Divider />
+              <Stack spacing={1.2}>
+                <Box sx={{ p: 1, borderRadius: 1.5, bgcolor: "action.hover" }}>
+                  <Typography variant="body2" sx={{ fontWeight: 700, fontSize: 13 }}>
+                    GDAL Pipeline: Job #081 đang chạy
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Đang xử lý overviews cho Ảnh vệ tinh Hà Nội 2026 (68%).
+                  </Typography>
+                </Box>
+                <Box sx={{ p: 1, borderRadius: 1.5, bgcolor: "action.hover" }}>
+                  <Typography variant="body2" sx={{ fontWeight: 700, fontSize: 13 }}>
+                    Map Release đã Publish
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Bản đồ Nền Quốc Gia Vector v2.1 đã cập nhật vào catalog.
+                  </Typography>
+                </Box>
+                <Box sx={{ p: 1, borderRadius: 1.5, bgcolor: "action.hover" }}>
+                  <Typography variant="body2" sx={{ fontWeight: 700, fontSize: 13 }}>
+                    SeaweedFS S3 Storage
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Bucket raw-datasets đã kích hoạt kiểm toán hash SHA256.
+                  </Typography>
+                </Box>
+              </Stack>
+            </Stack>
+          </Popover>
+
+          {/* User Profile Popover */}
+          <Popover
+            open={Boolean(userMenuAnchor)}
+            anchorEl={userMenuAnchor}
+            onClose={() => setUserMenuAnchor(null)}
+            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+            transformOrigin={{ vertical: "top", horizontal: "right" }}
+            slotProps={{ paper: { sx: { width: 280, p: 2, borderRadius: 2.5 } } }}
+          >
+            <Stack spacing={1.5}>
+              <Box>
+                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+                  {user?.name}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {user?.email}
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={0.5} sx={{ flexWrap: "wrap", rowGap: 0.5 }}>
+                <Chip label="Role: Admin" size="small" color="primary" sx={{ fontSize: 11 }} />
+                <Chip label="JWT Auth" size="small" variant="outlined" sx={{ fontSize: 11 }} />
+              </Stack>
+              <Divider />
+              <Button
+                variant="outlined"
+                color="error"
+                size="small"
+                startIcon={<LogOut size={15} />}
+                onClick={() => {
+                  setUserMenuAnchor(null);
+                  void logout();
+                }}
+              >
+                {t("common.logout")}
+              </Button>
+            </Stack>
+          </Popover>
+
+          {/* Body Pages */}
           <Box sx={{ p: { xs: 2, sm: 3.5 }, maxWidth: 1540, mx: "auto" }}>
             {activePage === "overview" && <DashboardPage onNavigate={setActivePage} />}
-            {activePage === "datasets" && <DatasetsPage />}
-            {activePage === "pipeline" && (
-              <PlaceholderPage
-                icon={<Workflow size={25} />}
-                title={t("placeholder.pipeline")}
-                description={t("placeholder.pipelineDescription")}
-              />
+            {activePage === "datasets" && (
+              <DatasetsPage onNavigatePipeline={() => setActivePage("pipeline")} />
             )}
+            {activePage === "pipeline" && <PipelinePage />}
             {activePage === "styles" && (
               <Suspense fallback={<PageLoading />}>
                 <StyleStudioPage />
               </Suspense>
             )}
-            {activePage === "releases" && (
-              <PlaceholderPage
-                icon={<Send size={25} />}
-                title={t("nav.releases")}
-                description={t("placeholder.releasesDescription")}
-              />
-            )}
-            {activePage === "access" && (
-              <PlaceholderPage
-                icon={<FileStack size={25} />}
-                title={t("placeholder.access")}
-                description={t("placeholder.accessDescription")}
-              />
-            )}
+            {activePage === "releases" && <ReleasesPage />}
+            {activePage === "access" && <AccessPage />}
           </Box>
         </Box>
       </Box>

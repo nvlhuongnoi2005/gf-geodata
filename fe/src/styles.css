@@ -1,5 +1,6 @@
 :root {
   font-synthesis: none;
+  --drawer-border: #e2e8f0;
 }
 * {
   box-sizing: border-box;
@@ -12,67 +13,118 @@ body,
 body {
   min-width: 320px;
 }
+
 .maplibregl-ctrl-group {
-  box-shadow: 0 6px 20px rgb(23 40 44 / 14%);
+  box-shadow: 0 4px 14px rgb(15 23 42 / 12%);
+  border-radius: 8px !important;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.08);
 }
 
 .login-map-surface {
-  background-color: #eef6f4;
+  background-color: #0b1319;
   background-image:
-    linear-gradient(rgb(18 68 61 / 0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(18 68 61 / 0.06) 1px, transparent 1px),
-    radial-gradient(circle at 80% 20%, rgb(45 173 149 / 22%), transparent 32%),
-    radial-gradient(circle at 12% 85%, rgb(223 23 67 / 18%), transparent 34%);
+    linear-gradient(rgba(20, 184, 166, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(20, 184, 166, 0.08) 1px, transparent 1px),
+    radial-gradient(circle at 80% 20%, rgba(20, 184, 166, 0.2), transparent 45%),
+    radial-gradient(circle at 15% 85%, rgba(211, 47, 47, 0.22), transparent 42%);
   background-size:
-    34px 34px,
-    34px 34px,
+    36px 36px,
+    36px 36px,
     auto,
     auto;
 }
 
 .login-route {
-  stroke-dasharray: 7 11;
-  animation: route-flow 18s linear infinite;
+  stroke-dasharray: 8 12;
+  animation: route-flow 20s linear infinite;
 }
+
 @keyframes route-flow {
   to {
-    stroke-dashoffset: -260;
+    stroke-dashoffset: -280;
   }
 }
+
 .status-pulse {
-  animation: status-pulse 2.2s ease-in-out infinite;
+  animation: status-pulse 2s ease-in-out infinite;
 }
+
 @keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
   50% {
-    opacity: 0.5;
-    transform: scale(0.88);
+    opacity: 0.45;
+    transform: scale(0.85);
   }
 }
 
 .app-drawer {
-  border-right: 1px solid var(--drawer-border, #e4ebea);
+  border-right: 1px solid var(--drawer-border, #e2e8f0);
 }
+
 .app-drawer .MuiListItemButton-root.Mui-selected {
-  background: #fff0f3;
-  color: #b90c36;
+  background: rgba(211, 47, 47, 0.08);
+  color: #b71c1c;
+  font-weight: 700;
 }
+
 .app-drawer .MuiListItemButton-root.Mui-selected .MuiListItemIcon-root {
-  color: #d91440;
+  color: #d32f2f;
 }
+
 .app-drawer .MuiListItemButton-root:hover {
-  background: rgb(94 128 124 / 10%);
+  background: rgba(15, 23, 42, 0.05);
 }
 
 html[data-color-mode="dark"] {
-  --drawer-border: #304044;
+  --drawer-border: #1e293b;
 }
+
+html[data-color-mode="dark"] .login-map-surface {
+  background-color: #060a0e;
+}
+
 html[data-color-mode="dark"] .app-drawer .MuiListItemButton-root.Mui-selected {
-  background: #4b1d29;
-  color: #ffb8c7;
+  background: rgba(239, 68, 68, 0.14);
+  color: #f87171;
 }
+
 html[data-color-mode="dark"]
   .app-drawer
   .MuiListItemButton-root.Mui-selected
   .MuiListItemIcon-root {
-  color: #ff9aae;
+  color: #ef4444;
+}
+
+html[data-color-mode="dark"] .app-drawer .MuiListItemButton-root:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* Monospace code styling */
+.code-editor-textarea {
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace !important;
+  font-size: 13px !important;
+  line-height: 1.55 !important;
+  letter-spacing: normal !important;
+  tab-size: 2;
+}
+
+/* Log output terminal */
+.terminal-stream {
+  background-color: #05080c;
+  color: #38bdf8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  border-radius: 8px;
+  padding: 14px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
 }

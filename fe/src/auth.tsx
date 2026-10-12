@@ -70,6 +70,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
           setAccessToken(payload.access_token);
           setUser(payload.user);
         }
+      } catch {
+        // Backend not reachable, stay in signed-out state
       } finally {
         setIsLoading(false);
       }
@@ -107,7 +109,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
     if (csrf) headers.set("X-CSRF-Token", csrf);
     if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
     try {
-      await fetch("/auth/logout", { method: "POST", headers, credentials: "include", body: "{}" });
+      await fetch("/auth/logout", {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: "{}",
+      });
     } finally {
       setAccessToken(null);
       setUser(null);
