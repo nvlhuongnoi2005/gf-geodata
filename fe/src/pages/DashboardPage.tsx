@@ -150,8 +150,8 @@ export function DashboardPage({ onNavigate }: { onNavigate: (page: PageKey) => v
           <Stack spacing={2.1} sx={{ mt: 2.6 }}>
             <HealthRow
               label={t("dashboard.mapAuth")}
-              value={t("dashboard.connected")}
-              color="#16806e"
+              value={t("dashboard.notVerified")}
+              color="#a96108"
             />
             <HealthRow
               label={t("dashboard.storageBackend")}

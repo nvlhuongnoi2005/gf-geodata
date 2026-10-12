@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Box, Button, Chip, Paper, Stack, TextField, Typography } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  Paper,
+  Stack,
+  TextField,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import { Braces, Save } from "lucide-react";
 import { Map, NavigationControl, type StyleSpecification } from "maplibre-gl";
 import { useI18n } from "../i18n";
@@ -16,6 +26,7 @@ const initialStyle = JSON.stringify(
 export function StyleStudioPage() {
   const { t } = useI18n();
   const [source, setSource] = useState(initialStyle);
+  const [appliedSource, setAppliedSource] = useState(initialStyle);
   const [error, setError] = useState<string | null>(null);
   const mapNode = useRef<HTMLDivElement | null>(null);
   const map = useRef<Map | null>(null);
@@ -39,6 +50,7 @@ export function StyleStudioPage() {
       if (parsed.version !== 8 || !Array.isArray(parsed.layers))
         throw new Error(t("style.errorSpecification"));
       map.current?.setStyle(parsed, { diff: false });
+      setAppliedSource(source);
       setError(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : t("style.errorJson"));
@@ -52,16 +64,24 @@ export function StyleStudioPage() {
         sx={{ justifyContent: "space-between" }}
       >
         <Box>
-          <Typography variant="h4">Style Studio</Typography>
+          <Typography variant="h4">{t("style.title")}</Typography>
           <Typography color="text.secondary" sx={{ mt: 0.5 }}>
             {t("style.description")}
           </Typography>
         </Box>
-        <Stack direction="row" spacing={1}>
-          <Chip icon={<Braces size={15} />} label={t("style.unsaved")} variant="outlined" />
-          <Button variant="contained" startIcon={<Save size={17} />} disabled>
-            {t("style.save")}
-          </Button>
+        <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", rowGap: 1 }}>
+          <Chip
+            icon={<Braces size={15} />}
+            label={t(source === appliedSource ? "style.previewApplied" : "style.previewOutOfDate")}
+            variant="outlined"
+          />
+          <Tooltip title={t("style.saveUnavailable")}>
+            <span>
+              <Button variant="contained" startIcon={<Save size={17} />} disabled>
+                {t("style.save")}
+              </Button>
+            </span>
+          </Tooltip>
         </Stack>
       </Stack>
       <Box
@@ -80,8 +100,8 @@ export function StyleStudioPage() {
             direction="row"
             sx={{ mb: 1.5, justifyContent: "space-between", alignItems: "center" }}
           >
-            <Typography sx={{ fontWeight: 800 }}>style.json</Typography>
-            <Button size="small" onClick={applyStyle}>
+            <Typography sx={{ fontWeight: 800 }}>{t("style.fileName")}</Typography>
+            <Button disabled={source === appliedSource} size="small" onClick={applyStyle}>
               {t("common.applyPreview")}
             </Button>
           </Stack>
@@ -120,7 +140,7 @@ export function StyleStudioPage() {
             }}
           >
             <Typography variant="caption" sx={{ fontWeight: 800 }}>
-              MapLibre preview
+              {t("style.preview")}
             </Typography>
             <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
               {t("style.previewDescription")}

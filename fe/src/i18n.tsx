@@ -10,17 +10,18 @@ import en from "./locales/en.json";
 import vi from "./locales/vi.json";
 
 export type Language = "vi" | "en";
+export type TranslationKey = keyof typeof en;
 
 type TranslateOptions = Record<string, string | number>;
 
 interface I18nContextValue {
   language: Language;
   setLanguage: (language: Language) => void;
-  t: (key: string, options?: TranslateOptions) => string;
+  t: (key: TranslationKey, options?: TranslateOptions) => string;
 }
 
 const STORAGE_KEY = "app_language";
-const translations: Record<Language, Record<string, string>> = { vi, en };
+const translations: Record<Language, Record<TranslationKey, string>> = { vi, en };
 const I18nContext = createContext<I18nContextValue | null>(null);
 
 function getInitialLanguage(): Language {

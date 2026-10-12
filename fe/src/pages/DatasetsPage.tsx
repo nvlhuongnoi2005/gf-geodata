@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { Box, Button, Chip, Paper, Stack, Typography } from "@mui/material";
+import type { ComponentProps, ReactNode } from "react";
+import { Box, Button, Chip, Paper, Stack, Tooltip, Typography } from "@mui/material";
 import { FileUp, FolderUp, HardDrive, Plus, ShieldCheck } from "lucide-react";
 import { useI18n } from "../i18n";
 export function DatasetsPage() {
@@ -18,12 +18,12 @@ export function DatasetsPage() {
           </Typography>
         </Box>
         <Stack direction="row" spacing={1.1}>
-          <Button variant="outlined" startIcon={<FolderUp size={17} />}>
+          <UnavailableButton variant="outlined" startIcon={<FolderUp size={17} />}>
             {t("datasets.import")}
-          </Button>
-          <Button variant="contained" startIcon={<Plus size={17} />}>
+          </UnavailableButton>
+          <UnavailableButton variant="contained" startIcon={<Plus size={17} />}>
             {t("datasets.new")}
-          </Button>
+          </UnavailableButton>
         </Stack>
       </Stack>
       <Box sx={{ display: "grid", gridTemplateColumns: { lg: ".85fr 1.55fr" }, gap: 2 }}>
@@ -43,7 +43,7 @@ export function DatasetsPage() {
             <Box>
               <Typography sx={{ fontWeight: 750 }}>{t("datasets.storage")}</Typography>
               <Typography variant="caption" color="text.secondary">
-                SeaweedFS S3 / raw bucket
+                {t("datasets.storageLocation")}
               </Typography>
             </Box>
           </Stack>
@@ -96,16 +96,29 @@ export function DatasetsPage() {
             >
               <Chip label="GeoTIFF" size="small" />
               <Chip label="GeoPackage" size="small" />
+              <Chip label="OSM PBF" size="small" />
               <Chip label="MBTiles" size="small" />
               <Chip label="Shapefile" size="small" />
             </Stack>
-            <Button variant="contained" startIcon={<Plus size={17} />} sx={{ mt: 2.7 }}>
+            <UnavailableButton variant="contained" startIcon={<Plus size={17} />} sx={{ mt: 2.7 }}>
               {t("dashboard.createDataset")}
-            </Button>
+            </UnavailableButton>
           </Box>
         </Paper>
       </Box>
     </Stack>
+  );
+}
+function UnavailableButton({ children, ...props }: ComponentProps<typeof Button>) {
+  const { t } = useI18n();
+  return (
+    <Tooltip title={t("common.backendRequired")}>
+      <span>
+        <Button {...props} disabled>
+          {children}
+        </Button>
+      </span>
+    </Tooltip>
   );
 }
 function Policy({ icon, text }: { icon: ReactNode; text: string }) {

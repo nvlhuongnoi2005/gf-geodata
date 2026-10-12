@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { lazy, Suspense, useState, type FormEvent, type ReactNode } from "react";
 import {
   AppBar,
   Avatar,
@@ -39,19 +39,27 @@ import {
   Sparkles,
   Workflow,
 } from "lucide-react";
-import { useAuth } from "../auth";
-import { useI18n } from "../i18n";
+import { useAuth, type LoginFailureReason } from "../auth";
+import { useI18n, type TranslationKey } from "../i18n";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { ThemeModeSwitcher } from "./AppearanceControls";
 import { DashboardPage } from "../pages/DashboardPage";
 import { DatasetsPage } from "../pages/DatasetsPage";
 import { PlaceholderPage } from "../pages/PlaceholderPage";
-import { StyleStudioPage } from "../pages/StyleStudioPage";
+
+const StyleStudioPage = lazy(async () => ({
+  default: (await import("../pages/StyleStudioPage")).StyleStudioPage,
+}));
 
 const drawerWidth = 278;
 type PageKey = "overview" | "datasets" | "pipeline" | "styles" | "releases" | "access";
 const mapLoginUrl = import.meta.env.VITE_MAP_LOGIN_URL || "http://webgis.localhost/login";
 const mapUrl = import.meta.env.VITE_WEBGIS_MAP_URL || "http://webgis.localhost/map";
+const loginErrorKey: Record<LoginFailureReason, TranslationKey> = {
+  invalidCredentials: "login.errorInvalid",
+  notAdmin: "login.errorNotAdmin",
+  connection: "login.errorConnection",
+};
 const nav = [
   { key: "overview", label: "nav.overview", caption: "nav.overviewCaption", icon: Gauge },
   { key: "datasets", label: "nav.datasets", caption: "nav.datasetsCaption", icon: Database },
@@ -110,7 +118,7 @@ function LoginMapArtwork() {
         <Box>
           <Typography sx={{ fontWeight: 800 }}>Geodata Control</Typography>
           <Typography variant="caption" sx={{ opacity: 0.68 }}>
-            Tile Server · Operations
+            {t("brand.operations")}
           </Typography>
         </Box>
       </Stack>
@@ -134,7 +142,7 @@ function LoginMapArtwork() {
       <Box sx={{ position: "relative", maxWidth: 500 }}>
         <Chip
           icon={<Sparkles size={14} />}
-          label="Geospatial operations"
+          label={t("brand.geospatialOperations")}
           size="small"
           sx={{ color: "#c9fff4", bgcolor: "rgb(96 229 202 / 12%)" }}
         />
@@ -148,19 +156,19 @@ function LoginMapArtwork() {
         </Typography>
       </Box>
       <Stack direction="row" spacing={3} sx={{ position: "relative" }}>
-        <Signal label="Offline-ready" />
+        <Signal label={t("brand.offlineReady")} />
         <Signal label="SeaweedFS S3" />
-        <Signal label="Map Auth" />
+        <Signal label={t("brand.mapAuth")} />
       </Stack>
     </Box>
   );
 }
 function SessionGate({ children }: { children: ReactNode }) {
-  const { isLoading, login, user } = useAuth();
+  const { isLoading, login, logout, user } = useAuth();
   const { t } = useI18n();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<TranslationKey | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const signIn = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -168,7 +176,7 @@ function SessionGate({ children }: { children: ReactNode }) {
     setError(null);
     const result = await login(email, password);
     setIsSubmitting(false);
-    if (!result.ok) setError(result.message);
+    if (!result.ok) setError(loginErrorKey[result.reason]);
   };
   if (isLoading)
     return (
@@ -180,7 +188,7 @@ function SessionGate({ children }: { children: ReactNode }) {
           bgcolor: "background.default",
         }}
       >
-        <CircularProgress />
+        <CircularProgress aria-label={t("common.loading")} />
       </Box>
     );
   if (!user)
@@ -272,7 +280,7 @@ function SessionGate({ children }: { children: ReactNode }) {
                       fontSize: 14,
                     }}
                   >
-                    {error}
+                    {t(error)}
                   </Box>
                 )}
               </Stack>
@@ -315,10 +323,26 @@ function SessionGate({ children }: { children: ReactNode }) {
           <Typography color="text.secondary" sx={{ mt: 1 }}>
             {t("login.noAccessDescription")}
           </Typography>
+          <Button sx={{ mt: 2.5 }} variant="outlined" onClick={() => void logout()}>
+            {t("login.useDifferentAccount")}
+          </Button>
         </Paper>
       </Box>
     );
   return <>{children}</>;
+}
+function PageLoading() {
+  const { t } = useI18n();
+  return (
+    <Box sx={{ minHeight: 360, display: "grid", placeItems: "center" }}>
+      <Stack spacing={1.25} sx={{ alignItems: "center" }}>
+        <CircularProgress aria-label={t("common.loading")} />
+        <Typography variant="body2" color="text.secondary">
+          {t("common.loading")}
+        </Typography>
+      </Stack>
+    </Box>
+  );
 }
 export function AdminShell() {
   const [activePage, setActivePage] = useState<PageKey>("overview");
@@ -343,7 +367,7 @@ export function AdminShell() {
           <Box>
             <Typography sx={{ fontWeight: 800 }}>Geodata Control</Typography>
             <Typography variant="caption" color="text.secondary">
-              Tile platform · offline
+              {t("brand.platformOffline")}
             </Typography>
           </Box>
         </Stack>
@@ -361,7 +385,7 @@ export function AdminShell() {
           fontSize: 10,
         }}
       >
-        WORKSPACE
+        {t("brand.workspace")}
       </Typography>
       <List sx={{ px: 1.15, py: 0 }}>
         {nav.map((item) => {
@@ -469,7 +493,11 @@ export function AdminShell() {
               }}
             >
               <Stack direction="row" spacing={1.3} sx={{ alignItems: "center" }}>
-                <IconButton onClick={() => setMobileOpen(true)} sx={{ display: { md: "none" } }}>
+                <IconButton
+                  aria-label={t("common.openNavigation")}
+                  onClick={() => setMobileOpen(true)}
+                  sx={{ display: { md: "none" } }}
+                >
                   <Menu />
                 </IconButton>
                 <Box>
@@ -478,7 +506,7 @@ export function AdminShell() {
                     color="text.secondary"
                     sx={{ display: "block", lineHeight: 1.1 }}
                   >
-                    GEODATA WORKSPACE
+                    {t("brand.workspace")}
                   </Typography>
                   <Typography sx={{ fontWeight: 750, fontSize: 15 }}>{t(active.label)}</Typography>
                 </Box>
@@ -486,10 +514,17 @@ export function AdminShell() {
               <Stack direction="row" spacing={1.2} sx={{ alignItems: "center" }}>
                 <LanguageSwitcher />
                 <ThemeModeSwitcher />
-                <Tooltip title={t("common.notifications")}>
-                  <IconButton size="small" sx={{ border: "1px solid", borderColor: "divider" }}>
-                    <Bell size={18} />
-                  </IconButton>
+                <Tooltip title={t("common.notificationsUnavailable")}>
+                  <span>
+                    <IconButton
+                      aria-label={t("common.notificationsUnavailable")}
+                      disabled
+                      size="small"
+                      sx={{ border: "1px solid", borderColor: "divider" }}
+                    >
+                      <Bell size={18} />
+                    </IconButton>
+                  </span>
                 </Tooltip>
                 <Button
                   component="a"
@@ -521,7 +556,7 @@ export function AdminShell() {
                       {user?.name}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
-                      WebGIS admin
+                      {t("account.webgisAdmin")}
                     </Typography>
                   </Box>
                 </Stack>
@@ -538,7 +573,11 @@ export function AdminShell() {
                 description={t("placeholder.pipelineDescription")}
               />
             )}
-            {activePage === "styles" && <StyleStudioPage />}
+            {activePage === "styles" && (
+              <Suspense fallback={<PageLoading />}>
+                <StyleStudioPage />
+              </Suspense>
+            )}
             {activePage === "releases" && (
               <PlaceholderPage
                 icon={<Send size={25} />}

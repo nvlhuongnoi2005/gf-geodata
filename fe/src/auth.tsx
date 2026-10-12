@@ -16,7 +16,8 @@ export type AuthUser = {
 };
 
 type TokenResponse = { access_token: string; user: AuthUser };
-type LoginResult = { ok: true } | { ok: false; message: string };
+export type LoginFailureReason = "invalidCredentials" | "notAdmin" | "connection";
+type LoginResult = { ok: true } | { ok: false; reason: LoginFailureReason };
 type AuthContextValue = {
   user: AuthUser | null;
   isLoading: boolean;
@@ -84,19 +85,19 @@ export function AuthProvider({ children }: PropsWithChildren) {
         credentials: "include",
         body: JSON.stringify({ email, password }),
       });
-      if (!response.ok) return { ok: false, message: "Email or password is incorrect." };
+      if (!response.ok) return { ok: false, reason: "invalidCredentials" };
 
       const payload = (await response.json()) as TokenResponse;
       if (payload.user.role !== "admin") {
         setAccessToken(null);
         setUser(null);
-        return { ok: false, message: "This WebGIS account is not a Geodata administrator." };
+        return { ok: false, reason: "notAdmin" };
       }
       setAccessToken(payload.access_token);
       setUser(payload.user);
       return { ok: true };
     } catch {
-      return { ok: false, message: "Unable to connect to the WebGIS authentication service." };
+      return { ok: false, reason: "connection" };
     }
   };
 
