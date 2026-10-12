@@ -81,14 +81,14 @@ Hệ thống không thay thế `map` hoặc `db-auth` hiện tại:
 - FR-39: Catalog trả metadata đủ để frontend `map` render raster/vector basemap và overlay.
 - FR-40: Map `public` vẫn hoạt động không yêu cầu đăng nhập.
 - FR-41: Map restricted yêu cầu access token hợp lệ từ auth service hiện tại.
-- FR-42: Không để browser truy cập trực tiếp Ceph bucket hoặc credential storage.
+- FR-42: Không để browser truy cập trực tiếp object storage hoặc credential storage. Ngoại lệ duy nhất là URL multipart presigned ngắn hạn để upload raw vào một key staging đã định; URL này không cấp quyền list, read tile/style hoặc access key.
 - FR-43: User không có quyền không thể truy cập artifact tile bằng URL đã biết.
 
 ## 4. Yêu cầu phi chức năng
 
 - NFR-01: Hệ thống vận hành không cần Internet tại runtime.
 - NFR-02: Container image, GDAL dependency, font, glyph, sprite và basemap asset phải có thể triển khai trong môi trường air-gapped.
-- NFR-03: Raw data và output phải lưu trên object storage S3-compatible Ceph; database chỉ lưu metadata.
+- NFR-03: Raw data và output phải lưu trên SeaweedFS S3-compatible nội bộ; database chỉ lưu metadata.
 - NFR-04: Pipeline phải xử lý bất đồng bộ; request upload/publish không bị block bởi GDAL.
 - NFR-05: Raw file, tileset, style và Map Release phải có version, checksum và audit trail.
 - NFR-06: Tile runtime không chạy GDAL hoặc convert dữ liệu trên request path.
@@ -96,6 +96,7 @@ Hệ thống không thay thế `map` hoặc `db-auth` hiện tại:
 - NFR-08: Worker có giới hạn CPU, RAM, disk scratch, thời gian chạy và số job song song.
 - NFR-09: Hệ thống có health check, metrics, structured logs và cảnh báo job thất bại.
 - NFR-10: Các tile/style URL đã public phải ổn định khi admin publish version mới; rollback không yêu cầu convert lại.
+- NFR-11: Ở topology Kubernetes một node, object storage không được quảng cáo HA; dữ liệu SeaweedFS phải nằm trên persistent volume và được backup sang một failure domain khác.
 
 ## 5. Ngoài phạm vi giai đoạn đầu
 

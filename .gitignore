@@ -4,5 +4,6 @@ fe/dist/
 .env
 .env.local
 *.tsbuildinfo
-deployment/storage/ceph-s3-credentials.yaml
+deployment/storage/seaweedfs-s3-config.yaml
+deployment/storage/s3-bootstrap-credentials.yaml
 

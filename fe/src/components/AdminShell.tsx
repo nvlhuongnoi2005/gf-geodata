@@ -149,7 +149,7 @@ function LoginMapArtwork() {
       </Box>
       <Stack direction="row" spacing={3} sx={{ position: "relative" }}>
         <Signal label="Offline-ready" />
-        <Signal label="Ceph S3" />
+        <Signal label="SeaweedFS S3" />
         <Signal label="Map Auth" />
       </Stack>
     </Box>

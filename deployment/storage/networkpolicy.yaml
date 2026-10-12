@@ -1,0 +1,35 @@
+# The S3 API is private. Future API, worker and gateway Deployments must use
+# the labels below; the frontend is deliberately excluded.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: seaweedfs-s3-private
+  namespace: tile-server
+  labels:
+    app.kubernetes.io/name: seaweedfs
+    app.kubernetes.io/part-of: tile-server
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: seaweedfs
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-api
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-gdal-worker
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-tile-gateway
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-s3-bootstrap
+      ports:
+        - protocol: TCP
+          port: 8333

@@ -1,0 +1,10 @@
+.git
+.github
+node_modules
+dist
+fe/dist
+.env
+.env.*
+*.tsbuildinfo
+deployment/storage/seaweedfs-s3-config.yaml
+deployment/storage/s3-bootstrap-credentials.yaml

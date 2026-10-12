@@ -10,6 +10,7 @@ metadata:
     app.kubernetes.io/part-of: tile-server
 spec:
   backoffLimit: 3
+  activeDeadlineSeconds: 300
   ttlSecondsAfterFinished: 86400
   template:
     metadata:
@@ -27,32 +28,40 @@ spec:
           env:
             - name: S3_ENDPOINT
               valueFrom:
-                secretKeyRef: { name: geodata-ceph-s3, key: S3_ENDPOINT }
+                secretKeyRef: { name: geodata-s3-bootstrap, key: S3_ENDPOINT }
             - name: S3_REGION
               valueFrom:
-                secretKeyRef: { name: geodata-ceph-s3, key: S3_REGION }
+                secretKeyRef: { name: geodata-s3-bootstrap, key: S3_REGION }
             - name: S3_RAW_BUCKET
               valueFrom:
-                secretKeyRef: { name: geodata-ceph-s3, key: S3_RAW_BUCKET }
+                secretKeyRef: { name: geodata-s3-bootstrap, key: S3_RAW_BUCKET }
             - name: S3_DERIVED_BUCKET
               valueFrom:
-                secretKeyRef: { name: geodata-ceph-s3, key: S3_DERIVED_BUCKET }
+                secretKeyRef: { name: geodata-s3-bootstrap, key: S3_DERIVED_BUCKET }
             - name: S3_STYLES_BUCKET
               valueFrom:
-                secretKeyRef: { name: geodata-ceph-s3, key: S3_STYLES_BUCKET }
+                secretKeyRef: { name: geodata-s3-bootstrap, key: S3_STYLES_BUCKET }
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
-                secretKeyRef: { name: geodata-ceph-s3, key: S3_ACCESS_KEY }
+                secretKeyRef: { name: geodata-s3-bootstrap, key: S3_ACCESS_KEY }
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom:
-                secretKeyRef: { name: geodata-ceph-s3, key: S3_SECRET_KEY }
+                secretKeyRef: { name: geodata-s3-bootstrap, key: S3_SECRET_KEY }
             - name: AWS_DEFAULT_REGION
               valueFrom:
-                secretKeyRef: { name: geodata-ceph-s3, key: S3_REGION }
+                secretKeyRef: { name: geodata-s3-bootstrap, key: S3_REGION }
           command: ["/bin/sh", "-ec"]
           args:
             - |
               s3() { aws --endpoint-url "$S3_ENDPOINT" "$@"; }
+              for attempt in $(seq 1 60); do
+                if s3 s3api list-buckets >/dev/null 2>&1; then
+                  break
+                fi
+                echo "Waiting for SeaweedFS S3 ($attempt/60)..."
+                sleep 2
+              done
+              s3 s3api list-buckets >/dev/null
               ensure_bucket() {
                 bucket="$1"
                 if ! s3 s3api head-bucket --bucket "$bucket" 2>/dev/null; then
@@ -63,7 +72,7 @@ spec:
               put_lifecycle() {
                 bucket="$1"
                 days="$2"
-                printf '%s\n' "{\"Rules\":[{\"ID\":\"expire-noncurrent-versions\",\"Status\":\"Enabled\",\"Filter\":{\"Prefix\":\"\"},\"NoncurrentVersionExpiration\":{\"NoncurrentDays\":$days}}]}" > /tmp/lifecycle.json
+                printf '%s\n' "{\"Rules\":[{\"ID\":\"abort-incomplete-multipart\",\"Status\":\"Enabled\",\"Filter\":{\"Prefix\":\"\"},\"AbortIncompleteMultipartUpload\":{\"DaysAfterInitiation\":2}},{\"ID\":\"expire-noncurrent-versions\",\"Status\":\"Enabled\",\"Filter\":{\"Prefix\":\"\"},\"NoncurrentVersionExpiration\":{\"NoncurrentDays\":$days}}]}" > /tmp/lifecycle.json
                 s3 s3api put-bucket-lifecycle-configuration --bucket "$bucket" --lifecycle-configuration file:///tmp/lifecycle.json
               }
               ensure_bucket "$S3_RAW_BUCKET"
@@ -72,5 +81,5 @@ spec:
               put_lifecycle "$S3_RAW_BUCKET" 90
               put_lifecycle "$S3_DERIVED_BUCKET" 30
               put_lifecycle "$S3_STYLES_BUCKET" 30
-              echo "Ceph S3 geodata buckets are ready."
+              echo "SeaweedFS S3 geodata buckets are ready."
 

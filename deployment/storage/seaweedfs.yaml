@@ -1,0 +1,119 @@
+# Single-node SeaweedFS S3 storage for the current MVP. `weed server` runs the
+# master, volume server, filer and S3 gateway in one pod; this is intentionally
+# not an HA topology. Mirror and pin this image in the internal registry before
+# applying it in an air-gapped environment.
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs
+  namespace: tile-server
+  labels:
+    app.kubernetes.io/name: seaweedfs
+    app.kubernetes.io/part-of: tile-server
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: seaweedfs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs-s3
+  namespace: tile-server
+  labels:
+    app.kubernetes.io/name: seaweedfs
+    app.kubernetes.io/component: s3
+    app.kubernetes.io/part-of: tile-server
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: seaweedfs
+  ports:
+    - name: s3
+      port: 8333
+      targetPort: s3
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: seaweedfs
+  namespace: tile-server
+  labels:
+    app.kubernetes.io/name: seaweedfs
+    app.kubernetes.io/part-of: tile-server
+spec:
+  serviceName: seaweedfs
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: seaweedfs
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: seaweedfs
+        app.kubernetes.io/component: s3
+        app.kubernetes.io/part-of: tile-server
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: seaweedfs
+          # Replace this pinned release tag with the immutable digest of the
+          # internally mirrored, acceptance-tested image before production.
+          image: registry.internal/platform/seaweedfs:4.44
+          imagePullPolicy: IfNotPresent
+          args:
+            - server
+            - -dir=/data
+            - -ip.bind=0.0.0.0
+            - -volume.max=0
+            - -volume.minFreeSpace=100GiB
+            - -master.volumeSizeLimitMB=1024
+            - -filer
+            - -s3
+            - -s3.port=8333
+            - -s3.config=/etc/seaweedfs/s3.json
+          ports:
+            - name: s3
+              containerPort: 8333
+          readinessProbe:
+            tcpSocket:
+              port: s3
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: s3
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: s3-config
+              mountPath: /etc/seaweedfs/s3.json
+              subPath: s3.json
+              readOnly: true
+      volumes:
+        - name: s3-config
+          secret:
+            secretName: seaweedfs-s3-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: seaweedfs
+          app.kubernetes.io/part-of: tile-server
+      spec:
+        accessModes: [ReadWriteOnce]
+        # Set this to the cluster's local/SSD-backed StorageClass if no default
+        # class exists. Do not use emptyDir for persistent geodata.
+        resources:
+          requests:
+            storage: 1Ti

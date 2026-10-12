@@ -88,7 +88,7 @@ export function DashboardPage({ onNavigate }: { onNavigate: (page: PageKey) => v
         <Metric
           icon={<HardDrive size={20} />}
           label={t("dashboard.rawStorage")}
-          value="Ceph S3"
+          value="SeaweedFS S3"
           detail={t("dashboard.rawStorageDetail")}
           tone="amber"
         />
@@ -118,8 +118,8 @@ export function DashboardPage({ onNavigate }: { onNavigate: (page: PageKey) => v
           <Stack spacing={2} sx={{ mt: 3 }}>
             <SetupRow
               number="01"
-              title={t("dashboard.ceph")}
-              description={t("dashboard.cephDescription")}
+              title={t("dashboard.seaweed")}
+              description={t("dashboard.seaweedDescription")}
               state={t("dashboard.waiting")}
             />
             <SetupRow

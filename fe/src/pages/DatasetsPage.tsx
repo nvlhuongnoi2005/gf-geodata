@@ -43,7 +43,7 @@ export function DatasetsPage() {
             <Box>
               <Typography sx={{ fontWeight: 750 }}>{t("datasets.storage")}</Typography>
               <Typography variant="caption" color="text.secondary">
-                Ceph S3 / raw bucket
+                SeaweedFS S3 / raw bucket
               </Typography>
             </Box>
           </Stack>
