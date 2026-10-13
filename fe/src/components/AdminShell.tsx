@@ -521,9 +521,15 @@ export function AdminShell() {
         <Box component="main" sx={{ flexGrow: 1, minWidth: 0 }}>
           <AppBar
             position="sticky"
-            color="inherit"
-            elevation={0}
-            sx={{ borderBottom: "1px solid", borderColor: "divider", bgcolor: "background.paper" }}
+            elevation={3}
+            sx={{
+              background: (theme) =>
+                theme.palette.mode === "dark"
+                  ? "linear-gradient(135deg, #7f1d1d 0%, #991b1b 50%, #0f4c48 100%)"
+                  : "linear-gradient(135deg, #c62828 0%, #d32f2f 55%, #00796b 100%)",
+              color: "#fff",
+              borderBottom: "none",
+            }}
           >
             <Toolbar
               sx={{
@@ -536,19 +542,20 @@ export function AdminShell() {
                 <IconButton
                   aria-label={t("common.openNavigation")}
                   onClick={() => setMobileOpen(true)}
-                  sx={{ display: { md: "none" } }}
+                  sx={{ display: { md: "none" }, color: "rgba(255,255,255,0.9)" }}
                 >
                   <MenuIcon />
                 </IconButton>
                 <Box>
                   <Typography
                     variant="caption"
-                    color="text.secondary"
-                    sx={{ display: "block", lineHeight: 1.1 }}
+                    sx={{ display: "block", lineHeight: 1.1, color: "rgba(255,255,255,0.65)" }}
                   >
                     {t("brand.workspace")}
                   </Typography>
-                  <Typography sx={{ fontWeight: 800, fontSize: 16 }}>{t(active.label)}</Typography>
+                  <Typography sx={{ fontWeight: 800, fontSize: 16, color: "#fff" }}>
+                    {t(active.label)}
+                  </Typography>
                 </Box>
               </Stack>
 
@@ -561,9 +568,13 @@ export function AdminShell() {
                   <IconButton
                     size="small"
                     onClick={(e) => setNotificationAnchor(e.currentTarget)}
-                    sx={{ border: "1px solid", borderColor: "divider" }}
+                    sx={{
+                      border: "1px solid rgba(255,255,255,0.35)",
+                      color: "rgba(255,255,255,0.9)",
+                      "&:hover": { bgcolor: "rgba(255,255,255,0.12)" },
+                    }}
                   >
-                    <Badge badgeContent={3} color="primary">
+                    <Badge badgeContent={3} color="warning">
                       <Bell size={18} />
                     </Badge>
                   </IconButton>
@@ -578,7 +589,15 @@ export function AdminShell() {
                   variant="outlined"
                   size="small"
                   startIcon={<ExternalLink size={15} />}
-                  sx={{ display: { xs: "none", sm: "inline-flex" } }}
+                  sx={{
+                    display: { xs: "none", sm: "inline-flex" },
+                    color: "#fff",
+                    borderColor: "rgba(255,255,255,0.5)",
+                    "&:hover": {
+                      borderColor: "#fff",
+                      bgcolor: "rgba(255,255,255,0.12)",
+                    },
+                  }}
                 >
                   {t("common.openWebgis")}
                 </Button>
@@ -587,26 +606,36 @@ export function AdminShell() {
                 <Stack
                   direction="row"
                   spacing={1}
-                  sx={{ alignItems: "center", pl: 0.5, cursor: "pointer" }}
+                  sx={{
+                    alignItems: "center",
+                    pl: 0.5,
+                    cursor: "pointer",
+                    borderRadius: 2,
+                    px: 1,
+                    py: 0.5,
+                    "&:hover": { bgcolor: "rgba(255,255,255,0.12)" },
+                    transition: "background 0.2s",
+                  }}
                   onClick={(e) => setUserMenuAnchor(e.currentTarget)}
                 >
                   <Avatar
                     sx={{
                       width: 36,
                       height: 36,
-                      bgcolor: "primary.light",
-                      color: "primary.main",
+                      bgcolor: "rgba(255,255,255,0.22)",
+                      color: "#fff",
                       fontSize: 14,
                       fontWeight: 800,
+                      border: "2px solid rgba(255,255,255,0.5)",
                     }}
                   >
                     {user?.name.slice(0, 1).toUpperCase()}
                   </Avatar>
                   <Box sx={{ display: { xs: "none", sm: "block" } }}>
-                    <Typography variant="body2" sx={{ fontWeight: 750, lineHeight: 1.15 }}>
+                    <Typography variant="body2" sx={{ fontWeight: 750, lineHeight: 1.15, color: "#fff" }}>
                       {user?.name}
                     </Typography>
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography variant="caption" sx={{ color: "rgba(255,255,255,0.65)" }}>
                       {t("account.webgisAdmin")}
                     </Typography>
                   </Box>
@@ -702,9 +731,7 @@ export function AdminShell() {
           {/* Body Pages */}
           <Box sx={{ p: { xs: 2, sm: 3.5 }, maxWidth: 1540, mx: "auto" }}>
             {activePage === "overview" && <DashboardPage />}
-            {activePage === "datasets" && (
-              <DatasetsPage onNavigateConvert={() => setActivePage("pipeline")} />
-            )}
+            {activePage === "datasets" && <DatasetsPage />}
             {activePage === "pipeline" && <PipelinePage />}
             {activePage === "styles" && (
               <Suspense fallback={<PageLoading />}>
