@@ -242,10 +242,19 @@ export function ReleasesPage() {
         sx={{ justifyContent: "space-between", alignItems: { sm: "flex-end" } }}
       >
         <Box>
-          <Typography variant="h4">{t("nav.releases")}</Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-            Quản lý các bản phát hành bản đồ (Map Releases), tích hợp basemap, overlays và cấp quyền
-            xuất bản vào WebGIS catalog.
+          <Typography
+            variant="h4"
+            sx={{ fontSize: { xs: 24, sm: 27 }, fontWeight: 700, letterSpacing: "-0.02em" }}
+          >
+            {t("nav.releases")}
+          </Typography>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ mt: 0.5, fontSize: "0.9375rem" }}
+          >
+            Quản lý các bản phát hành bản đồ, tích hợp basemap, overlays và cấp quyền xuất bản
+            catalog.
           </Typography>
         </Box>
         <Stack direction="row" spacing={1.2}>
@@ -254,7 +263,7 @@ export function ReleasesPage() {
             startIcon={<Plus size={16} />}
             onClick={() => setOpenCreateModal(true)}
           >
-            Tạo Release mới
+            Tạo bản phát hành mới
           </Button>
         </Stack>
       </Stack>

@@ -247,10 +247,19 @@ export function AccessPage() {
         sx={{ justifyContent: "space-between", alignItems: { sm: "flex-end" } }}
       >
         <Box>
-          <Typography variant="h4">{t("nav.access")}</Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-            Kiểm soát phân quyền xem bản đồ (Access Control) theo danh tính `sub` từ `db-auth`, bảo
-            vệ từng TileJSON và layer dữ liệu restricted.
+          <Typography
+            variant="h4"
+            sx={{ fontSize: { xs: 24, sm: 27 }, fontWeight: 700, letterSpacing: "-0.02em" }}
+          >
+            {t("nav.access")}
+          </Typography>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ mt: 0.5, fontSize: "0.9375rem" }}
+          >
+            Quản lý chính sách xem bản đồ, phân quyền truy cập an toàn cho người dùng và các nhóm
+            đơn vị.
           </Typography>
         </Box>
         <Stack direction="row" spacing={1.2}>
@@ -335,10 +344,10 @@ export function AccessPage() {
             </Box>
             <Box>
               <Typography variant="caption" color="text.secondary">
-                Cơ chế bảo vệ runtime
+                Cơ chế bảo vệ
               </Typography>
-              <Typography variant="h5" sx={{ fontWeight: 800 }}>
-                JWT Claim `sub`
+              <Typography sx={{ fontSize: "1.25rem", fontWeight: 700 }}>
+                Kiểm soát tập trung
               </Typography>
             </Box>
           </Stack>
@@ -359,9 +368,9 @@ export function AccessPage() {
             </Box>
             <Box>
               <Typography variant="caption" color="text.secondary">
-                Nhật ký Audit trail
+                Nhật ký kiểm toán
               </Typography>
-              <Typography variant="h5" sx={{ fontWeight: 800 }}>
+              <Typography sx={{ fontSize: "1.45rem", fontWeight: 700 }}>
                 {auditLogs.length} sự kiện
               </Typography>
             </Box>

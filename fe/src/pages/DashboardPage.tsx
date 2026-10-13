@@ -1,555 +1,216 @@
-import { useState, type ReactNode } from "react";
-import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  LinearProgress,
-  Paper,
-  Stack,
-  Tooltip,
-  Typography,
-} from "@mui/material";
-import {
-  Activity,
-  ArrowRight,
-  CheckCircle2,
-  Cpu,
-  Database,
-  ExternalLink,
-  HardDrive,
-  Layers,
-  Paintbrush,
-  Play,
-  RefreshCw,
-  Send,
-  ShieldCheck,
-  UploadCloud,
-  Workflow,
-  Zap,
-} from "lucide-react";
+import type { ReactNode } from "react";
+import { Box, Paper, Stack, Typography } from "@mui/material";
+import { Database, HardDrive, Layers, Workflow } from "lucide-react";
 import { useI18n } from "../i18n";
 
-type PageKey = "overview" | "datasets" | "pipeline" | "styles" | "releases" | "access";
-
-export function DashboardPage({ onNavigate }: { onNavigate: (page: PageKey) => void }) {
+export function DashboardPage() {
   const { t } = useI18n();
-  const [checkingHealth, setCheckingHealth] = useState(false);
-  const [healthStatus, setHealthStatus] = useState<"ok" | "pending">("ok");
-
-  const handleRecheckHealth = () => {
-    setCheckingHealth(true);
-    setTimeout(() => {
-      setCheckingHealth(false);
-      setHealthStatus("ok");
-    }, 1200);
-  };
 
   return (
-    <Stack spacing={3.25}>
-      {/* Hero Welcome Banner */}
-      <Paper
-        sx={{
-          overflow: "hidden",
-          position: "relative",
-          p: { xs: 2.5, sm: 4 },
-          bgcolor: "#0b141a",
-          color: "#f1fbfa",
-          borderRadius: 3,
-          backgroundImage:
-            "radial-gradient(circle at 85% 30%, rgba(20, 184, 166, 0.35), transparent 45%), radial-gradient(circle at 20% 120%, rgba(211, 47, 47, 0.28), transparent 45%)",
-          border: "1px solid rgba(255, 255, 255, 0.08)",
-        }}
-      >
-        <Stack
-          direction={{ xs: "column", md: "row" }}
-          spacing={3}
-          sx={{ justifyContent: "space-between", alignItems: { md: "flex-end" } }}
+    <Stack spacing={3}>
+      {/* Page Header (26-28px, Semi-bold, operational focus) */}
+      <Box>
+        <Typography
+          variant="h4"
+          sx={{
+            fontSize: { xs: 24, sm: 27 },
+            fontWeight: 700,
+            letterSpacing: "-0.02em",
+            color: "text.primary",
+          }}
         >
-          <Box>
-            <Chip
-              icon={<Zap size={14} color="#14b8a6" />}
-              label="Hệ thống Quản trị Geodata · Sẵn sàng vận hành"
-              size="small"
-              sx={{ bgcolor: "rgba(20, 184, 166, 0.15)", color: "#5eead4", fontWeight: 700 }}
-            />
-            <Typography variant="h3" sx={{ mt: 2.2, maxWidth: 680, fontWeight: 800 }}>
-              {t("dashboard.title")}
-            </Typography>
-            <Typography
-              sx={{ mt: 1.4, maxWidth: 620, color: "rgba(241, 245, 249, 0.75)", lineHeight: 1.7 }}
-            >
-              {t("dashboard.description")}
-            </Typography>
-          </Box>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.2}>
-            <Button
-              variant="outlined"
-              onClick={() => onNavigate("pipeline")}
-              sx={{ color: "#f8fafc", borderColor: "rgba(255, 255, 255, 0.3)" }}
-              startIcon={<Workflow size={16} />}
-            >
-              {t("dashboard.viewPipeline")}
-            </Button>
-            <Button
-              variant="contained"
-              startIcon={<UploadCloud size={18} />}
-              onClick={() => onNavigate("datasets")}
-            >
-              {t("dashboard.addDataset")}
-            </Button>
-          </Stack>
-        </Stack>
-      </Paper>
-
-      {/* Quick Actions Shortcuts */}
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          gap: 1.75,
-        }}
-      >
-        <QuickActionButton
-          icon={<Database size={18} />}
-          title="Nạp Dataset mới"
-          subtitle="Tải file GeoTIFF, GeoPackage"
-          onClick={() => onNavigate("datasets")}
-        />
-        <QuickActionButton
-          icon={<Play size={18} />}
-          title="Tạo Job GDAL"
-          subtitle="Chuyển đổi COG, PMTiles"
-          onClick={() => onNavigate("pipeline")}
-        />
-        <QuickActionButton
-          icon={<Paintbrush size={18} />}
-          title="Thiết kế Style"
-          subtitle="Chỉnh sửa MapLibre v8"
-          onClick={() => onNavigate("styles")}
-        />
-        <QuickActionButton
-          icon={<Send size={18} />}
-          title="Phát hành Map Release"
-          subtitle="Xuất bản Catalog WebGIS"
-          onClick={() => onNavigate("releases")}
-        />
+          {t("nav.overview")}
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontSize: "0.9375rem" }}>
+          {t("dashboard.description")}
+        </Typography>
       </Box>
 
-      {/* Primary KPI Metrics */}
+      {/* 4 Overview Metric Cards (Responsive Grid, 22-24px metric value, no links/CTAs) */}
       <Box
         sx={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
           gap: 2,
         }}
       >
-        <Metric
+        <MetricCard
           icon={<Database size={20} />}
           label={t("dashboard.datasets")}
           value="4 datasets"
-          detail="7.8 GB dữ liệu raw lưu trữ trong SeaweedFS"
-          tone="red"
-          onClick={() => onNavigate("datasets")}
+          subtitle={t("dashboard.datasetsDetail")}
+          tone="primary"
         />
-        <Metric
+        <MetricCard
           icon={<Workflow size={20} />}
           label={t("dashboard.jobs")}
           value="1 đang chạy / 4"
-          detail="Worker pool GDAL 3.9 đang hoạt động ổn định"
+          subtitle={t("dashboard.jobsDetail")}
           tone="teal"
-          onClick={() => onNavigate("pipeline")}
         />
-        <Metric
+        <MetricCard
           icon={<HardDrive size={20} />}
           label={t("dashboard.rawStorage")}
-          value="SeaweedFS S3"
-          detail="Air-gapped private cluster, 2 buckets active"
+          value="Lưu trữ riêng tư"
+          subtitle={t("dashboard.rawStorageDetail")}
           tone="amber"
-          onClick={() => onNavigate("datasets")}
         />
-        <Metric
-          icon={<ShieldCheck size={20} />}
+        <MetricCard
+          icon={<Layers size={20} />}
           label={t("dashboard.releases")}
           value="3 Live Releases"
-          detail="Catalog WebGIS đồng bộ qua JWT claims"
+          subtitle={t("dashboard.releasesDetail")}
           tone="slate"
-          onClick={() => onNavigate("releases")}
         />
       </Box>
 
-      {/* Workflow Guidance & System Health */}
-      <Box sx={{ display: "grid", gridTemplateColumns: { lg: "1.4fr 1fr" }, gap: 2 }}>
-        {/* Setup & Onboarding Progress */}
-        <Paper variant="outlined" sx={{ p: { xs: 2.25, sm: 3 } }}>
-          <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-            <Box>
-              <Typography variant="h6">{t("dashboard.setup")}</Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.45 }}>
-                {t("dashboard.setupDescription")}
-              </Typography>
-            </Box>
-            <Chip label="Hoàn tất 3 / 3 bước" size="small" color="success" variant="outlined" />
-          </Stack>
-
-          <Stack spacing={2} sx={{ mt: 3 }}>
-            <SetupRow
-              number="01"
-              title="Khởi tạo SeaweedFS S3 & Raw Bucket"
-              description="Đã gắn s3://raw-datasets và s3://derived-tilesets trên persistent volume"
-              state="Đã sẵn sàng"
-              isDone
-              onClick={() => onNavigate("datasets")}
-            />
-            <SetupRow
-              number="02"
-              title="Tiếp nhận và chuyển đổi dữ liệu nguồn"
-              description="Nạp dữ liệu GeoTIFF/GeoPackage và cấu hình pipeline GDAL"
-              state="Hoạt động"
-              isDone
-              onClick={() => onNavigate("pipeline")}
-            />
-            <SetupRow
-              number="03"
-              title="Xuất bản Map Release & Phân quyền ACL"
-              description="Liên kết style version và cấp quyền truy cập theo UUID sub"
-              state="Sẵn sàng"
-              isDone
-              onClick={() => onNavigate("releases")}
-            />
-          </Stack>
-
-          <Button
-            sx={{ mt: 2.4 }}
-            endIcon={<ArrowRight size={16} />}
-            onClick={() => onNavigate("datasets")}
-          >
-            {t("dashboard.openDatasets")}
-          </Button>
-        </Paper>
-
-        {/* System Health Monitor */}
-        <Paper variant="outlined" sx={{ p: { xs: 2.25, sm: 3 } }}>
-          <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
-            <Box>
-              <Typography variant="h6">{t("dashboard.health")}</Typography>
-              <Typography variant="caption" color="text.secondary">
-                Giám sát tình trạng hạ tầng offline
-              </Typography>
-            </Box>
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<RefreshCw size={14} className={checkingHealth ? "status-pulse" : ""} />}
-              onClick={handleRecheckHealth}
-              disabled={checkingHealth}
-            >
-              {checkingHealth ? "Đang kiểm tra..." : "Kiểm tra lại"}
-            </Button>
-          </Stack>
-
-          <Stack spacing={2.1} sx={{ mt: 2.8 }}>
-            <HealthRow
-              label="Dịch vụ Xác thực WebGIS (db-auth)"
-              value={healthStatus === "ok" ? "Sẵn sàng (JWT Auth)" : "Đang kiểm tra"}
-              color="#16a34a"
-            />
-            <HealthRow
-              label="Hạ tầng lưu trữ SeaweedFS S3"
-              value={healthStatus === "ok" ? "Online (100% Volume)" : "Đang kết nối"}
-              color="#16a34a"
-            />
-            <HealthRow
-              label="Worker Pool GDAL 3.9"
-              value={healthStatus === "ok" ? "4 Workers Available" : "Khởi động"}
-              color="#16a34a"
-            />
-            <HealthRow
-              label="Tile Gateway & Cache Policy"
-              value={healthStatus === "ok" ? "Không share cache restricted" : "Chờ"}
-              color="#0284c7"
-            />
-          </Stack>
-
-          <Box sx={{ mt: 3, px: 1.5, py: 1.3, borderRadius: 2.5, bgcolor: "action.hover" }}>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ lineHeight: 1.55, display: "block" }}
-            >
-              {t("dashboard.note")} Hệ thống kiểm tra quyền hạn ngay tại thời điểm phục vụ TileJSON,
-              sprite và vector tiles (FR-35).
-            </Typography>
-          </Box>
-        </Paper>
-      </Box>
-
-      {/* Recent Pipeline Activity Stream */}
-      <Paper variant="outlined" sx={{ p: { xs: 2.25, sm: 3 } }}>
-        <Stack
-          direction="row"
-          sx={{ justifyContent: "space-between", alignItems: "center", mb: 2 }}
+      {/* System Health Section (Section 3.3 in UI.md) */}
+      <Paper variant="outlined" sx={{ p: { xs: 2.25, sm: 3 }, maxWidth: 720 }}>
+        <Typography
+          variant="h6"
+          sx={{
+            fontSize: "1.1rem",
+            fontWeight: 650,
+            letterSpacing: "-0.01em",
+            mb: 0.5,
+          }}
         >
-          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-            <Activity size={18} color="#d32f2f" />
-            <Typography variant="h6">Hoạt động & Tiến trình Xử lý Gần đây</Typography>
-          </Stack>
-          <Button size="small" onClick={() => onNavigate("pipeline")}>
-            Xem toàn bộ hàng đợi
-          </Button>
+          {t("dashboard.health")}
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ fontSize: "0.875rem", mb: 2.5 }}>
+          Tổng quan mức sẵn sàng của các dịch vụ lõi vận hành dữ liệu bản đồ.
+        </Typography>
+
+        <Stack spacing={2}>
+          <HealthRow label={t("dashboard.mapAuth")} state="Sẵn sàng" />
+          <HealthRow label={t("dashboard.storageBackend")} state="Sẵn sàng" />
+          <HealthRow label={t("dashboard.tileGateway")} state="Sẵn sàng" />
         </Stack>
 
-        <Stack spacing={1.5}>
-          <ActivityRow
-            badge="GDAL PIPELINE"
-            badgeColor="primary"
-            title="Job JOB-2026-081: Đang tạo overviews cho Ảnh vệ tinh Hà Nội (0.5m)"
-            time="Đang chạy (68%)"
-            detail="Tác vụ: gdaladdo 2 4 8 16 32 — Worker: gdal-worker-02"
-          />
-          <ActivityRow
-            badge="MAP RELEASE"
-            badgeColor="success"
-            title="Xuất bản thành công: Bản đồ Nền Quốc Gia Chuẩn (Vector v2.1)"
-            time="Hôm nay, 10:10"
-            detail="Đã cập nhật catalog tương thích WebGIS (/api/tile-catalog)"
-          />
-          <ActivityRow
-            badge="ACCESS CONTROL"
-            badgeColor="info"
-            title="Cấp quyền xem cho kỹ sư Nguyễn Văn Trung (usr-9f2a-...)"
-            time="Hôm nay, 09:30"
-            detail="Gán quyền truy cập Map Release Ảnh Vệ Tinh Đô Thị"
-          />
-        </Stack>
+        <Box sx={{ mt: 3, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontSize: "0.8125rem", lineHeight: 1.6, display: "block" }}
+          >
+            {t("dashboard.note")}
+          </Typography>
+        </Box>
       </Paper>
     </Stack>
   );
 }
 
-function QuickActionButton({
-  icon,
-  title,
-  subtitle,
-  onClick,
-}: {
-  icon: ReactNode;
-  title: string;
-  subtitle: string;
-  onClick: () => void;
-}) {
-  return (
-    <Paper
-      variant="outlined"
-      onClick={onClick}
-      sx={{
-        p: 2,
-        cursor: "pointer",
-        transition: "all 0.15s ease",
-        "&:hover": {
-          borderColor: "primary.main",
-          bgcolor: "action.hover",
-          transform: "translateY(-2px)",
-        },
-      }}
-    >
-      <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-        <Box sx={{ p: 1, borderRadius: 2, bgcolor: "primary.light", color: "primary.main" }}>
-          {icon}
-        </Box>
-        <Box sx={{ minWidth: 0 }}>
-          <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
-            {title}
-          </Typography>
-          <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
-            {subtitle}
-          </Typography>
-        </Box>
-      </Stack>
-    </Paper>
-  );
-}
-
-function Metric({
+function MetricCard({
   icon,
   label,
   value,
-  detail,
-  tone = "red",
-  onClick,
+  subtitle,
+  tone = "primary",
 }: {
   icon: ReactNode;
   label: string;
   value: string;
-  detail: string;
-  tone?: "red" | "teal" | "amber" | "slate";
-  onClick?: () => void;
+  subtitle: string;
+  tone?: "primary" | "teal" | "amber" | "slate";
 }) {
-  const colors = {
-    red: ["rgba(211, 47, 47, 0.12)", "#d32f2f"],
-    teal: ["rgba(20, 184, 166, 0.12)", "#0f766e"],
-    amber: ["rgba(217, 119, 6, 0.12)", "#b45309"],
-    slate: ["rgba(71, 85, 105, 0.12)", "#334155"],
+  const toneColors = {
+    primary: ["rgba(211, 47, 47, 0.1)", "#d32f2f"],
+    teal: ["rgba(13, 148, 136, 0.1)", "#0d9488"],
+    amber: ["rgba(217, 119, 6, 0.1)", "#b45309"],
+    slate: ["rgba(71, 85, 105, 0.1)", "#475569"],
   }[tone];
 
   return (
-    <Paper
-      variant="outlined"
-      onClick={onClick}
-      sx={{
-        p: 2.25,
-        cursor: onClick ? "pointer" : "default",
-        transition: "border-color 0.15s ease",
-        "&:hover": onClick ? { borderColor: "primary.main" } : {},
-      }}
-    >
-      <Stack direction="row" spacing={1.35} sx={{ alignItems: "center" }}>
+    <Paper variant="outlined" sx={{ p: 2.5 }}>
+      <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
         <Box
           sx={{
-            p: 1.05,
-            borderRadius: 2.25,
-            bgcolor: colors[0],
-            color: colors[1],
+            width: 38,
+            height: 38,
+            borderRadius: 2,
+            bgcolor: toneColors[0],
+            color: toneColors[1],
             display: "grid",
+            placeItems: "center",
+            flexShrink: 0,
           }}
         >
           {icon}
         </Box>
-        <Box>
-          <Typography variant="caption" color="text.secondary">
-            {label}
-          </Typography>
-          <Typography variant="h5" sx={{ lineHeight: 1.1, mt: 0.15, fontWeight: 800 }}>
-            {value}
-          </Typography>
-        </Box>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ fontSize: "0.8125rem", fontWeight: 600 }}
+        >
+          {label}
+        </Typography>
       </Stack>
+
+      {/* Metric value: 22-24px per Section 6 */}
+      <Typography
+        sx={{
+          fontSize: "1.45rem",
+          fontWeight: 700,
+          lineHeight: 1.25,
+          mt: 1.75,
+          color: "text.primary",
+        }}
+      >
+        {value}
+      </Typography>
+
       <Typography
         variant="caption"
         color="text.secondary"
-        sx={{ mt: 1.45, display: "block", lineHeight: 1.45 }}
+        sx={{
+          fontSize: "0.8125rem",
+          lineHeight: 1.5,
+          mt: 0.75,
+          display: "block",
+        }}
       >
-        {detail}
+        {subtitle}
       </Typography>
     </Paper>
   );
 }
 
-function SetupRow({
-  number,
-  title,
-  description,
-  state,
-  isDone = false,
-  onClick,
-}: {
-  number: string;
-  title: string;
-  description: string;
-  state: string;
-  isDone?: boolean;
-  onClick?: () => void;
-}) {
+function HealthRow({ label, state }: { label: string; state: string }) {
   return (
     <Stack
       direction="row"
-      spacing={1.5}
-      onClick={onClick}
       sx={{
-        cursor: onClick ? "pointer" : "default",
-        p: 1,
-        borderRadius: 2,
-        "&:hover": onClick ? { bgcolor: "action.hover" } : {},
+        justifyContent: "space-between",
+        alignItems: "center",
+        py: 0.5,
       }}
     >
-      <Box
+      <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
+        <Box
+          sx={{
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            bgcolor: "success.main",
+            boxShadow: "0 0 0 3px rgba(34, 197, 94, 0.15)",
+          }}
+        />
+        <Typography variant="body2" sx={{ fontSize: "0.9375rem", fontWeight: 600 }}>
+          {label}
+        </Typography>
+      </Stack>
+
+      <Typography
+        variant="caption"
         sx={{
-          width: 32,
-          height: 32,
-          flexShrink: 0,
-          borderRadius: "50%",
-          display: "grid",
-          placeItems: "center",
-          bgcolor: isDone ? "success.main" : "primary.main",
-          color: "#fff",
-          fontSize: 12,
-          fontWeight: 800,
+          color: "success.main",
+          fontWeight: 700,
+          fontSize: "0.8125rem",
         }}
       >
-        {isDone ? <CheckCircle2 size={16} /> : number}
-      </Box>
-      <Box sx={{ minWidth: 0, flex: 1 }}>
-        <Stack direction="row" sx={{ justifyContent: "space-between", gap: 1 }}>
-          <Typography variant="body2" sx={{ fontWeight: 700 }}>
-            {title}
-          </Typography>
-          <Typography
-            variant="caption"
-            color={isDone ? "success.main" : "primary.main"}
-            sx={{ whiteSpace: "nowrap", fontWeight: 700 }}
-          >
-            {state}
-          </Typography>
-        </Stack>
-        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.25, display: "block" }}>
-          {description}
-        </Typography>
-      </Box>
-    </Stack>
-  );
-}
-
-function HealthRow({ label, value, color }: { label: string; value: string; color: string }) {
-  return (
-    <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
-      <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-        <Box sx={{ width: 9, height: 9, borderRadius: "50%", bgcolor: color }} />
-        <Typography variant="body2">{label}</Typography>
-      </Stack>
-      <Typography variant="caption" sx={{ color, fontWeight: 800 }}>
-        {value}
+        {state}
       </Typography>
     </Stack>
-  );
-}
-
-function ActivityRow({
-  badge,
-  badgeColor,
-  title,
-  time,
-  detail,
-}: {
-  badge: string;
-  badgeColor: "primary" | "success" | "info";
-  title: string;
-  time: string;
-  detail: string;
-}) {
-  return (
-    <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "action.hover" }}>
-      <Stack
-        direction="row"
-        sx={{ justifyContent: "space-between", alignItems: "flex-start", gap: 1 }}
-      >
-        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-          <Chip
-            label={badge}
-            size="small"
-            color={badgeColor}
-            sx={{ fontSize: 10, height: 20, fontWeight: 800 }}
-          />
-          <Typography variant="body2" sx={{ fontWeight: 700 }}>
-            {title}
-          </Typography>
-        </Stack>
-        <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>
-          {time}
-        </Typography>
-      </Stack>
-      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
-        {detail}
-      </Typography>
-    </Paper>
   );
 }

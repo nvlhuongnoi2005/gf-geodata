@@ -34,292 +34,301 @@ import {
   Clock,
   Cpu,
   FileCode,
-  HardDrive,
   Layers,
   Play,
   RefreshCw,
   RotateCcw,
   Search,
-  Terminal,
   Workflow,
   XCircle,
 } from "lucide-react";
 import { useI18n } from "../i18n";
 
-export type PipelineJob = {
+export type ConversionTask = {
   id: string;
   datasetName: string;
   sourceVersion: string;
-  taskType: "raster_cog" | "vector_mbtiles" | "vector_pmtiles" | "raster_mbtiles";
-  taskLabel: string;
-  status: "running" | "queued" | "completed" | "failed";
+  configLabel: string;
+  status: "running" | "queued" | "completed" | "needs_check";
   progress: number;
   currentStep: string;
   duration: string;
   inputSize: string;
   outputSize: string;
   startedAt: string;
-  logs: string[];
+  stepsHistory: Array<{
+    timestamp: string;
+    label: string;
+    status: "done" | "in_progress" | "error";
+  }>;
 };
 
-const initialJobs: PipelineJob[] = [
+const initialTasks: ConversionTask[] = [
   {
-    id: "JOB-2026-081",
+    id: "TASK-2026-081",
     datasetName: "Ảnh vệ tinh Hà Nội 2026 (0.5m)",
     sourceVersion: "v2.1",
-    taskType: "raster_cog",
-    taskLabel: "GeoTIFF → Cloud Optimized GeoTIFF (COG)",
+    configLabel: "Bản đồ Raster tối ưu hóa (Pyramids)",
     status: "running",
     progress: 68,
-    currentStep: "gdaladdo overviews (levels: 2 4 8 16 32)",
+    currentStep: "Đang tạo các mức chi tiết tổng quan (Overviews)",
     duration: "1m 45s",
     inputSize: "1.42 GB",
     outputSize: "980 MB (tính toán)",
     startedAt: "Hôm nay, 10:24",
-    logs: [
-      "[10:24:02] [INFO] Khởi tạo worker GDAL 3.9 container id: gdal-worker-02",
-      "[10:24:05] [INFO] Tải raw asset từ SeaweedFS: s3://raw-datasets/hanoi_imagery_2026_v2.tif",
-      "[10:24:18] [INFO] Kiểm tra file: Driver=GTiff, Size=32400x24800, Bands=4, CRS=EPSG:32648 (WGS 84 / UTM zone 48N)",
-      "[10:24:22] [EXEC] gdalwarp -s_srs EPSG:32648 -t_srs EPSG:3857 -r bilinear -co COMPRESS=DEFLATE input.tif reprojected.tif",
-      "[10:24:55] [INFO] Tái chiếu CRS EPSG:3857 hoàn tất (100%)",
-      "[10:25:01] [EXEC] gdaladdo -r average reprojected.tif 2 4 8 16 32",
-      "[10:25:28] [INFO] Đang xử lý overview pyramids... 68% hoàn tất",
+    stepsHistory: [
+      {
+        timestamp: "10:24",
+        label: "Tiếp nhận dữ liệu nguồn và kiểm tra tính hợp lệ",
+        status: "done",
+      },
+      { timestamp: "10:24", label: "Chuẩn hóa hệ quy chiếu tọa độ chuẩn hiển thị", status: "done" },
+      {
+        timestamp: "10:25",
+        label: "Đang tạo các mức chi tiết tổng quan (Overviews)",
+        status: "in_progress",
+      },
+      {
+        timestamp: "--:--",
+        label: "Kiểm toán tính toàn vẹn và tạo chỉ mục bản đồ",
+        status: "in_progress",
+      },
     ],
   },
   {
-    id: "JOB-2026-079",
+    id: "TASK-2026-079",
     datasetName: "Ranh giới hành chính Việt Nam (Bộ TN&MT)",
     sourceVersion: "v1.4",
-    taskType: "vector_pmtiles",
-    taskLabel: "GeoPackage → PMTiles Vector (z0-z14)",
+    configLabel: "Bản đồ Vector nhiều mức tỷ lệ (z0-z14)",
     status: "completed",
     progress: 100,
-    currentStep: "Hoàn tất sinh tileset & checksum MD5",
+    currentStep: "Hoàn tất chuyển đổi và kiểm toán tính toàn vẹn",
     duration: "4m 12s",
     inputSize: "480 MB",
     outputSize: "84 MB",
     startedAt: "Hôm nay, 09:15",
-    logs: [
-      "[09:15:00] [INFO] Worker tippecanoe-worker-01 tiếp nhận job",
-      "[09:15:10] [INFO] Kiểm tra layer GeoPackage: adm1_provinces (63), adm2_districts (705), adm3_communes (10599)",
-      "[09:15:35] [EXEC] tippecanoe -o vn_boundaries.pmtiles -zg --drop-densest-as-needed -l administrative input.gpkg",
-      "[09:18:42] [INFO] Sinh vector tiles thành công (z0 đến z14)",
-      "[09:19:02] [INFO] Upload tileset artifact sang SeaweedFS s3://derived-tilesets/vn_admin_v1.4.pmtiles",
-      "[09:19:12] [SUCCESS] TileJSON đã sẵn sàng cho Map Release. Trạng thái: READY",
+    stepsHistory: [
+      { timestamp: "09:15", label: "Tiếp nhận các lớp dữ liệu ranh giới 3 cấp", status: "done" },
+      {
+        timestamp: "09:16",
+        label: "Tối ưu hóa hình học và đơn giản hóa đa mức tỷ lệ",
+        status: "done",
+      },
+      { timestamp: "09:18", label: "Sinh các khối dữ liệu vector phân mảnh", status: "done" },
+      { timestamp: "09:19", label: "Kiểm toán tính toàn vẹn và sẵn sàng xuất bản", status: "done" },
     ],
   },
   {
-    id: "JOB-2026-078",
+    id: "TASK-2026-078",
     datasetName: "Dữ liệu giao thông OpenStreetMap Vietnam PBF",
     sourceVersion: "v1.0",
-    taskType: "vector_mbtiles",
-    taskLabel: "OSM PBF → Vector Tiles (MBTiles)",
+    configLabel: "Gói bản đồ vector giao thông (z0-z15)",
     status: "completed",
     progress: 100,
-    currentStep: "Tileset đã lưu kho SeaweedFS",
+    currentStep: "Sản phẩm chuyển đổi đã sẵn sàng liên kết bản đồ",
     duration: "18m 30s",
     inputSize: "3.1 GB",
     outputSize: "890 MB",
     startedAt: "Hôm qua, 16:40",
-    logs: [
-      "[16:40:12] [INFO] Nhận file PBF osm_vietnam_extract_2026.osm.pbf",
-      "[16:42:00] [INFO] Lọc các layer roads, water, buildings, poi bằng osm2pgsql",
-      "[16:55:18] [INFO] Ghép tile vector z0-z15",
-      "[16:58:42] [SUCCESS] Hoàn tất xuất bản tileset MBTiles",
+    stepsHistory: [
+      {
+        timestamp: "16:40",
+        label: "Phân tách các lớp đường bộ, thủy văn và địa danh",
+        status: "done",
+      },
+      {
+        timestamp: "16:48",
+        label: "Xây dựng chỉ mục không gian cho mạng lưới giao thông",
+        status: "done",
+      },
+      { timestamp: "16:55", label: "Ghép nối các mức tỷ lệ hiển thị chi tiết", status: "done" },
+      { timestamp: "16:58", label: "Hoàn tất lưu trữ và phân quyền", status: "done" },
     ],
   },
   {
-    id: "JOB-2026-075",
+    id: "TASK-2026-075",
     datasetName: "Mô hình số độ cao DEM Tây Nguyên 30m",
     sourceVersion: "v1.0",
-    taskType: "raster_cog",
-    taskLabel: "GeoTIFF DEM → Hillshade Terrarium PNG",
-    status: "failed",
+    configLabel: "Bản đồ nổi địa hình (Hillshade)",
+    status: "needs_check",
     progress: 42,
-    currentStep: "Lỗi: Không đủ dung lượng RAM khi sinh hillshade",
+    currentStep: "Cần kiểm tra: Cấu hình tài nguyên xử lý chưa phù hợp",
     duration: "1m 12s",
     inputSize: "2.8 GB",
     outputSize: "--",
     startedAt: "Hôm qua, 14:10",
-    logs: [
-      "[14:10:05] [INFO] Nhận dữ liệu DEM GeoTIFF",
-      "[14:10:45] [EXEC] gdaldem hillshade -z 1.5 -s 111120 dem_taynguyen.tif hillshade.tif",
-      "[14:11:17] [ERROR] std::bad_alloc: Worker vượt quá giới hạn 4GB RAM cấu hình trong NFR-08",
-      "[14:11:17] [FATAL] Job thất bại. Đề xuất: bật chế độ chunk tile hoặc tăng RAM worker.",
+    stepsHistory: [
+      { timestamp: "14:10", label: "Tiếp nhận dữ liệu mô hình số độ cao", status: "done" },
+      { timestamp: "14:11", label: "Khởi tạo mô hình chiếu sáng nổi địa hình", status: "done" },
+      {
+        timestamp: "14:11",
+        label: "Tác vụ tạm dừng: Yêu cầu phân đoạn khối xử lý nhỏ hơn",
+        status: "error",
+      },
     ],
   },
 ];
 
 export function PipelinePage() {
   const { t } = useI18n();
-  const [jobs, setJobs] = useState<PipelineJob[]>(initialJobs);
-  const [selectedJob, setSelectedJob] = useState<PipelineJob | null>(null);
+  const [tasks, setTasks] = useState<ConversionTask[]>(initialTasks);
+  const [selectedTask, setSelectedTask] = useState<ConversionTask | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [openCreateModal, setOpenCreateModal] = useState(false);
-  const [logDrawerOpen, setLogDrawerOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Form states
   const [formDataset, setFormDataset] = useState("Ảnh vệ tinh Đà Nẵng 2026 (1m)");
-  const [formProfile, setFormProfile] = useState<
-    "raster_cog" | "vector_mbtiles" | "vector_pmtiles"
-  >("raster_cog");
-  const [formTargetCrs, setFormTargetCrs] = useState("EPSG:3857 (Web Mercator)");
+  const [formConfig, setFormConfig] = useState("raster_stream");
+  const [formTargetCrs, setFormTargetCrs] = useState("EPSG:3857 (Chuẩn Web)");
   const [formMinZoom, setFormMinZoom] = useState("0");
   const [formMaxZoom, setFormMaxZoom] = useState("16");
 
-  // Simulated progress for running jobs
+  // Simulated progress
   useEffect(() => {
     const interval = setInterval(() => {
-      setJobs((prevJobs) =>
-        prevJobs.map((job) => {
-          if (job.status === "running") {
-            const nextProgress = Math.min(100, job.progress + 3);
+      setTasks((prev) =>
+        prev.map((item) => {
+          if (item.status === "running") {
+            const nextProgress = Math.min(100, item.progress + 2);
             if (nextProgress === 100) {
               return {
-                ...job,
+                ...item,
                 progress: 100,
                 status: "completed",
-                currentStep: "Hoàn tất sinh tileset & đã validate TileJSON",
-                logs: [
-                  ...job.logs,
-                  `[${new Date().toLocaleTimeString()}] [SUCCESS] Job hoàn tất thành công 100%. Tileset sẵn sàng!`,
-                ],
+                currentStep: "Hoàn tất chuyển đổi và kiểm toán tính toàn vẹn",
               };
             }
-            return {
-              ...job,
-              progress: nextProgress,
-            };
+            return { ...item, progress: nextProgress };
           }
-          return job;
+          return item;
         })
       );
     }, 4000);
     return () => clearInterval(interval);
   }, []);
 
-  const filteredJobs = jobs.filter((job) => {
-    const matchesFilter = filterStatus === "all" || job.status === filterStatus;
+  const filteredTasks = tasks.filter((item) => {
+    const matchesFilter = filterStatus === "all" || item.status === filterStatus;
     const matchesSearch =
-      job.datasetName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      job.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      job.taskLabel.toLowerCase().includes(searchQuery.toLowerCase());
+      item.datasetName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.configLabel.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesFilter && matchesSearch;
   });
 
-  const runningCount = jobs.filter((j) => j.status === "running").length;
-  const queuedCount = jobs.filter((j) => j.status === "queued").length;
-  const completedCount = jobs.filter((j) => j.status === "completed").length;
-  const failedCount = jobs.filter((j) => j.status === "failed").length;
+  const runningCount = tasks.filter((t) => t.status === "running").length;
+  const queuedCount = tasks.filter((t) => t.status === "queued").length;
+  const completedCount = tasks.filter((t) => t.status === "completed").length;
+  const needsCheckCount = tasks.filter((t) => t.status === "needs_check").length;
 
-  const handleRetryJob = (jobId: string) => {
-    setJobs((prev) =>
-      prev.map((j) => {
-        if (j.id === jobId) {
-          return {
-            ...j,
-            status: "running",
-            progress: 10,
-            currentStep: "Thử lại: Khởi động worker với cấu hình tối ưu bộ nhớ...",
-            logs: [
-              ...j.logs,
-              `[${new Date().toLocaleTimeString()}] [RETRY] Admin khởi động lại job. Tự động chia nhỏ khối xử lý.`,
-            ],
-          };
-        }
-        return j;
-      })
+  const handleRetryTask = (id: string) => {
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === id
+          ? {
+              ...t,
+              status: "running" as const,
+              progress: 10,
+              currentStep: "Đang khởi động lại với cấu hình tự động phân đoạn tối ưu...",
+            }
+          : t
+      )
     );
   };
 
-  const handleCancelJob = (jobId: string) => {
-    setJobs((prev) =>
-      prev.map((j) => {
-        if (j.id === jobId) {
-          return {
-            ...j,
-            status: "failed",
-            currentStep: "Đã bị quản trị viên hủy",
-            logs: [
-              ...j.logs,
-              `[${new Date().toLocaleTimeString()}] [CANCEL] Quản trị viên hủy tiến trình.`,
-            ],
-          };
-        }
-        return j;
-      })
+  const handleCancelTask = (id: string) => {
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === id
+          ? {
+              ...t,
+              status: "needs_check" as const,
+              currentStep: "Đã hủy bởi quản trị viên",
+            }
+          : t
+      )
     );
   };
 
-  const handleCreateJob = () => {
-    const newJob: PipelineJob = {
-      id: `JOB-2026-${String(Math.floor(Math.random() * 900) + 100)}`,
+  const handleCreateTask = () => {
+    const newTask: ConversionTask = {
+      id: `TASK-2026-${String(Math.floor(Math.random() * 900) + 100)}`,
       datasetName: formDataset,
       sourceVersion: "v1.0",
-      taskType: formProfile,
-      taskLabel:
-        formProfile === "raster_cog"
-          ? "GeoTIFF → Cloud Optimized GeoTIFF (COG)"
-          : formProfile === "vector_pmtiles"
-            ? `GeoPackage → PMTiles (z${formMinZoom}-z${formMaxZoom})`
-            : `Vector Data → MBTiles (z${formMinZoom}-z${formMaxZoom})`,
+      configLabel:
+        formConfig === "raster_stream"
+          ? `Bản đồ Raster tối ưu hóa (z${formMinZoom}-z${formMaxZoom})`
+          : `Bản đồ Vector nhiều mức tỷ lệ (z${formMinZoom}-z${formMaxZoom})`,
       status: "running",
       progress: 5,
-      currentStep: "Khởi tạo container GDAL và mount dữ liệu nguồn",
+      currentStep: "Tiếp nhận dữ liệu nguồn và chuẩn bị môi trường chuyển đổi",
       duration: "0m 10s",
       inputSize: "850 MB",
-      outputSize: "Đang xử lý...",
+      outputSize: "Đang tính toán...",
       startedAt: "Vừa xong",
-      logs: [
-        `[${new Date().toLocaleTimeString()}] [INIT] Tạo job xử lý cho dataset: ${formDataset}`,
-        `[${new Date().toLocaleTimeString()}] [CONFIG] Target CRS: ${formTargetCrs}, Zoom: ${formMinZoom}-${formMaxZoom}`,
-        `[${new Date().toLocaleTimeString()}] [WORKER] Cấp phát 2 vCPU, 4GB RAM worker pool`,
+      stepsHistory: [
+        { timestamp: "Vừa xong", label: "Tiếp nhận yêu cầu chuyển đổi", status: "done" },
+        {
+          timestamp: "Vừa xong",
+          label: "Cấu hình phạm vi và các mức tỷ lệ",
+          status: "in_progress",
+        },
       ],
     };
-    setJobs([newJob, ...jobs]);
+    setTasks([newTask, ...tasks]);
     setOpenCreateModal(false);
   };
 
-  const openLogs = (job: PipelineJob) => {
-    setSelectedJob(job);
-    setLogDrawerOpen(true);
+  const openDetail = (task: ConversionTask) => {
+    setSelectedTask(task);
+    setDrawerOpen(true);
   };
 
   return (
     <Stack spacing={3}>
-      {/* Header section */}
+      {/* Header section (Section 5 & Section 6 in UI.md) */}
       <Stack
         direction={{ xs: "column", sm: "row" }}
         spacing={2}
         sx={{ justifyContent: "space-between", alignItems: { sm: "flex-end" } }}
       >
         <Box>
-          <Typography variant="h4">{t("nav.pipeline")}</Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-            Quản lý hàng đợi chuyển đổi dữ liệu GDAL (Reproject, COG, PMTiles, Overviews) và giám
-            sát tiến độ xử lý offline.
+          <Typography
+            variant="h4"
+            sx={{ fontSize: { xs: 24, sm: 27 }, fontWeight: 700, letterSpacing: "-0.02em" }}
+          >
+            {t("nav.pipeline")}
+          </Typography>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ mt: 0.5, fontSize: "0.9375rem" }}
+          >
+            Quản lý các tác vụ chuyển đổi dữ liệu nguồn thành bản đồ, tối ưu hóa hiển thị và các mức
+            tỷ lệ.
           </Typography>
         </Box>
         <Stack direction="row" spacing={1.2}>
           <Button
             variant="outlined"
             startIcon={<RefreshCw size={16} />}
-            onClick={() => setJobs([...jobs])}
+            onClick={() => setTasks([...tasks])}
           >
-            Làm mới hàng đợi
+            Làm mới trạng thái
           </Button>
           <Button
             variant="contained"
             startIcon={<Play size={16} />}
             onClick={() => setOpenCreateModal(true)}
           >
-            Tạo Job xử lý mới
+            Tạo tác vụ chuyển đổi
           </Button>
         </Stack>
       </Stack>
 
-      {/* KPI Cards */}
+      {/* Overview Cards (22-24px metric value, Section 6) */}
       <Box
         sx={{
           display: "grid",
@@ -328,102 +337,51 @@ export function PipelinePage() {
         }}
       >
         <Paper variant="outlined" sx={{ p: 2 }}>
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-            <Box
-              sx={{
-                p: 1.1,
-                borderRadius: 2,
-                bgcolor: "info.light",
-                color: "info.main",
-                display: "grid",
-              }}
-            >
-              <Cpu size={20} />
-            </Box>
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Đang xử lý (Running)
-              </Typography>
-              <Typography variant="h5" sx={{ fontWeight: 800 }}>
-                {runningCount}{" "}
-                <Typography component="span" variant="caption">
-                  / 4 slots
-                </Typography>
-              </Typography>
-            </Box>
-          </Stack>
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+            Đang xử lý
+          </Typography>
+          <Typography sx={{ fontSize: "1.45rem", fontWeight: 700, mt: 0.5, color: "text.primary" }}>
+            {runningCount} tác vụ
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
+            Hệ thống chuyển đổi đang hoạt động
+          </Typography>
         </Paper>
 
         <Paper variant="outlined" sx={{ p: 2 }}>
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-            <Box
-              sx={{
-                p: 1.1,
-                borderRadius: 2,
-                bgcolor: "warning.light",
-                color: "warning.main",
-                display: "grid",
-              }}
-            >
-              <Clock size={20} />
-            </Box>
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Hàng đợi (Queued)
-              </Typography>
-              <Typography variant="h5" sx={{ fontWeight: 800 }}>
-                {queuedCount} job
-              </Typography>
-            </Box>
-          </Stack>
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+            Chờ xử lý
+          </Typography>
+          <Typography sx={{ fontSize: "1.45rem", fontWeight: 700, mt: 0.5, color: "text.primary" }}>
+            {queuedCount} tác vụ
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
+            Không có tác vụ tồn đọng
+          </Typography>
         </Paper>
 
         <Paper variant="outlined" sx={{ p: 2 }}>
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-            <Box
-              sx={{
-                p: 1.1,
-                borderRadius: 2,
-                bgcolor: "success.light",
-                color: "success.main",
-                display: "grid",
-              }}
-            >
-              <CheckCircle2 size={20} />
-            </Box>
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Hoàn tất (Ready)
-              </Typography>
-              <Typography variant="h5" sx={{ fontWeight: 800 }}>
-                {completedCount} tileset
-              </Typography>
-            </Box>
-          </Stack>
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+            Đã hoàn tất
+          </Typography>
+          <Typography sx={{ fontSize: "1.45rem", fontWeight: 700, mt: 0.5, color: "success.main" }}>
+            {completedCount} tác vụ
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
+            Sản phẩm đã sẵn sàng xuất bản
+          </Typography>
         </Paper>
 
         <Paper variant="outlined" sx={{ p: 2 }}>
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-            <Box
-              sx={{
-                p: 1.1,
-                borderRadius: 2,
-                bgcolor: "error.light",
-                color: "error.main",
-                display: "grid",
-              }}
-            >
-              <AlertCircle size={20} />
-            </Box>
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Lỗi / Cần thử lại
-              </Typography>
-              <Typography variant="h5" sx={{ fontWeight: 800 }}>
-                {failedCount}
-              </Typography>
-            </Box>
-          </Stack>
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+            Cần kiểm tra lại
+          </Typography>
+          <Typography sx={{ fontSize: "1.45rem", fontWeight: 700, mt: 0.5, color: "warning.main" }}>
+            {needsCheckCount} tác vụ
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
+            Có thể thử lại với cấu hình tối ưu
+          </Typography>
         </Paper>
       </Box>
 
@@ -436,10 +394,10 @@ export function PipelinePage() {
         >
           <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", rowGap: 1 }}>
             {[
-              { key: "all", label: "Tất cả (" + jobs.length + ")" },
-              { key: "running", label: "Đang chạy (" + runningCount + ")" },
+              { key: "all", label: "Tất cả (" + tasks.length + ")" },
+              { key: "running", label: "Đang xử lý (" + runningCount + ")" },
               { key: "completed", label: "Hoàn tất (" + completedCount + ")" },
-              { key: "failed", label: "Thất bại (" + failedCount + ")" },
+              { key: "needs_check", label: "Cần kiểm tra (" + needsCheckCount + ")" },
             ].map((f) => (
               <Chip
                 key={f.key}
@@ -454,7 +412,7 @@ export function PipelinePage() {
 
           <TextField
             size="small"
-            placeholder="Tìm theo ID, dataset hoặc tác vụ..."
+            placeholder="Tìm theo mã tác vụ, dữ liệu nguồn..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             slotProps={{
@@ -471,14 +429,14 @@ export function PipelinePage() {
         </Stack>
       </Paper>
 
-      {/* Job Table */}
+      {/* Task Table (Section 5 in UI.md) */}
       <TableContainer component={Paper} variant="outlined">
-        <Table sx={{ minWidth: 750 }}>
+        <Table sx={{ minWidth: 780 }}>
           <TableHead>
             <TableRow>
-              <TableCell>Job ID & Dataset</TableCell>
-              <TableCell>Tác vụ GDAL</TableCell>
-              <TableCell>Tiến độ & Bước hiện tại</TableCell>
+              <TableCell>Mã tác vụ & Dữ liệu nguồn</TableCell>
+              <TableCell>Cấu hình đầu ra</TableCell>
+              <TableCell>Tiến trình & Bước hiện tại</TableCell>
               <TableCell>Dung lượng</TableCell>
               <TableCell>Thời gian</TableCell>
               <TableCell>Trạng thái</TableCell>
@@ -486,49 +444,51 @@ export function PipelinePage() {
             </TableRow>
           </TableHead>
           <TableBody>
-            {filteredJobs.length === 0 ? (
+            {filteredTasks.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} sx={{ textAlign: "center", py: 5 }}>
-                  <Typography color="text.secondary">Không tìm thấy job phù hợp</Typography>
+                  <Typography color="text.secondary">
+                    Không tìm thấy tác vụ chuyển đổi phù hợp
+                  </Typography>
                 </TableCell>
               </TableRow>
             ) : (
-              filteredJobs.map((job) => (
-                <TableRow key={job.id} hover>
+              filteredTasks.map((item) => (
+                <TableRow key={item.id} hover>
                   <TableCell>
                     <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                      {job.id}
+                      {item.id}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
-                      {job.datasetName} ({job.sourceVersion})
+                      {item.datasetName} ({item.sourceVersion})
                     </Typography>
                   </TableCell>
                   <TableCell>
                     <Chip
                       icon={<FileCode size={13} />}
-                      label={job.taskLabel}
+                      label={item.configLabel}
                       size="small"
                       variant="outlined"
                       sx={{ fontSize: 11 }}
                     />
                   </TableCell>
-                  <TableCell sx={{ minWidth: 200 }}>
+                  <TableCell sx={{ minWidth: 220 }}>
                     <Stack spacing={0.6}>
                       <Stack direction="row" sx={{ justifyContent: "space-between" }}>
                         <Typography variant="caption" color="text.secondary" sx={{ fontSize: 11 }}>
-                          {job.currentStep}
+                          {item.currentStep}
                         </Typography>
                         <Typography variant="caption" sx={{ fontWeight: 700 }}>
-                          {job.progress}%
+                          {item.progress}%
                         </Typography>
                       </Stack>
                       <LinearProgress
                         variant="determinate"
-                        value={job.progress}
+                        value={item.progress}
                         color={
-                          job.status === "failed"
-                            ? "error"
-                            : job.status === "completed"
+                          item.status === "needs_check"
+                            ? "warning"
+                            : item.status === "completed"
                               ? "success"
                               : "primary"
                         }
@@ -538,31 +498,30 @@ export function PipelinePage() {
                   </TableCell>
                   <TableCell>
                     <Typography variant="caption" sx={{ display: "block" }}>
-                      Vào: {job.inputSize}
+                      Nguồn: {item.inputSize}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
-                      Ra: {job.outputSize}
+                      Đích: {item.outputSize}
                     </Typography>
                   </TableCell>
                   <TableCell>
                     <Typography variant="caption" sx={{ display: "block", fontWeight: 600 }}>
-                      {job.duration}
+                      {item.duration}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
-                      {job.startedAt}
+                      {item.startedAt}
                     </Typography>
                   </TableCell>
                   <TableCell>
-                    {job.status === "running" && (
+                    {item.status === "running" && (
                       <Chip
-                        icon={<RefreshCw size={13} className="status-pulse" />}
                         label="Đang xử lý"
                         size="small"
                         color="primary"
                         sx={{ fontWeight: 700 }}
                       />
                     )}
-                    {job.status === "completed" && (
+                    {item.status === "completed" && (
                       <Chip
                         icon={<CheckCircle2 size={13} />}
                         label="Hoàn tất"
@@ -571,55 +530,44 @@ export function PipelinePage() {
                         sx={{ fontWeight: 700 }}
                       />
                     )}
-                    {job.status === "failed" && (
+                    {item.status === "needs_check" && (
                       <Chip
-                        icon={<XCircle size={13} />}
-                        label="Lỗi"
+                        icon={<AlertCircle size={13} />}
+                        label="Cần kiểm tra"
                         size="small"
-                        color="error"
+                        color="warning"
                         sx={{ fontWeight: 700 }}
                       />
                     )}
-                    {job.status === "queued" && (
-                      <Chip label="Đang chờ" size="small" variant="outlined" />
+                    {item.status === "queued" && (
+                      <Chip label="Chờ xử lý" size="small" variant="outlined" />
                     )}
                   </TableCell>
                   <TableCell align="right">
                     <Stack direction="row" spacing={0.8} sx={{ justifyContent: "flex-end" }}>
-                      <Tooltip title="Xem log terminal của job">
+                      <Button size="small" variant="outlined" onClick={() => openDetail(item)}>
+                        Tiến trình
+                      </Button>
+                      {item.status === "needs_check" && (
+                        <Button
+                          size="small"
+                          variant="contained"
+                          color="warning"
+                          startIcon={<RotateCcw size={14} />}
+                          onClick={() => handleRetryTask(item.id)}
+                        >
+                          Thử lại
+                        </Button>
+                      )}
+                      {item.status === "running" && (
                         <Button
                           size="small"
                           variant="outlined"
-                          startIcon={<Terminal size={14} />}
-                          onClick={() => openLogs(job)}
+                          color="inherit"
+                          onClick={() => handleCancelTask(item.id)}
                         >
-                          Log
+                          Hủy
                         </Button>
-                      </Tooltip>
-                      {job.status === "failed" && (
-                        <Tooltip title="Thử lại job xử lý">
-                          <Button
-                            size="small"
-                            variant="contained"
-                            color="warning"
-                            startIcon={<RotateCcw size={14} />}
-                            onClick={() => handleRetryJob(job.id)}
-                          >
-                            Thử lại
-                          </Button>
-                        </Tooltip>
-                      )}
-                      {job.status === "running" && (
-                        <Tooltip title="Hủy tiến trình">
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            color="error"
-                            onClick={() => handleCancelJob(job.id)}
-                          >
-                            Hủy
-                          </Button>
-                        </Tooltip>
                       )}
                     </Stack>
                   </TableCell>
@@ -630,77 +578,75 @@ export function PipelinePage() {
         </Table>
       </TableContainer>
 
-      {/* Create Job Dialog */}
+      {/* Create Conversion Task Modal (Section 5 in UI.md) */}
       <Dialog
         open={openCreateModal}
         onClose={() => setOpenCreateModal(false)}
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle sx={{ fontWeight: 800 }}>Tạo Job xử lý GDAL mới</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 700, fontSize: "1.15rem" }}>
+          Tạo tác vụ chuyển đổi dữ liệu
+        </DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2.5}>
-            <Alert severity="info" sx={{ fontSize: 13 }}>
-              Hệ thống sẽ chạy container GDAL offline, chuyển đổi dữ liệu nguồn và xuất artifact
-              tileset vào SeaweedFS mà không làm gián đoạn runtime.
-            </Alert>
+            <Typography variant="body2" color="text.secondary">
+              Chọn phiên bản dữ liệu nguồn và cấu hình sản phẩm đầu ra (định dạng, phạm vi, mức tỷ
+              lệ zoom).
+            </Typography>
 
             <FormControl fullWidth size="small">
-              <InputLabel>Dataset nguồn</InputLabel>
+              <InputLabel>Dữ liệu nguồn</InputLabel>
               <Select
                 value={formDataset}
-                label="Dataset nguồn"
+                label="Dữ liệu nguồn"
                 onChange={(e) => setFormDataset(e.target.value)}
               >
                 <MenuItem value="Ảnh vệ tinh Đà Nẵng 2026 (1m)">
-                  Ảnh vệ tinh Đà Nẵng 2026 (1m) — GeoTIFF (850 MB)
+                  Ảnh vệ tinh Đà Nẵng 2026 (1m) — v1.0 (850 MB)
                 </MenuItem>
                 <MenuItem value="Ảnh vệ tinh Hà Nội 2026 (0.5m)">
-                  Ảnh vệ tinh Hà Nội 2026 (0.5m) — GeoTIFF (1.42 GB)
+                  Ảnh vệ tinh Hà Nội 2026 (0.5m) — v2.1 (1.42 GB)
                 </MenuItem>
                 <MenuItem value="Ranh giới hành chính Việt Nam (Bộ TN&MT)">
-                  Ranh giới hành chính Việt Nam — GeoPackage (480 MB)
+                  Ranh giới hành chính Việt Nam — v1.4 (480 MB)
                 </MenuItem>
                 <MenuItem value="Mô hình số độ cao DEM Tây Nguyên 30m">
-                  DEM Tây Nguyên 30m — GeoTIFF (2.8 GB)
+                  DEM Tây Nguyên 30m — v1.0 (2.8 GB)
                 </MenuItem>
               </Select>
             </FormControl>
 
             <FormControl fullWidth size="small">
-              <InputLabel>Profile xử lý GDAL</InputLabel>
+              <InputLabel>Cấu hình đầu ra</InputLabel>
               <Select
-                value={formProfile}
-                label="Profile xử lý GDAL"
-                onChange={(e) =>
-                  setFormProfile(
-                    e.target.value as "raster_cog" | "vector_mbtiles" | "vector_pmtiles"
-                  )
-                }
+                value={formConfig}
+                label="Cấu hình đầu ra"
+                onChange={(e) => setFormConfig(e.target.value)}
               >
-                <MenuItem value="raster_cog">
-                  Cloud Optimized GeoTIFF (COG) — Chuẩn raster tối ưu stream
+                <MenuItem value="raster_stream">
+                  Bản đồ Raster tối ưu hóa stream (Cloud-Ready Pyramids)
                 </MenuItem>
-                <MenuItem value="vector_pmtiles">
-                  Vector PMTiles (Tippecanoe) — Định dạng vector tile hiện đại
+                <MenuItem value="vector_multi">
+                  Bản đồ Vector nhiều mức tỷ lệ (Vector Tiles)
                 </MenuItem>
-                <MenuItem value="vector_mbtiles">
-                  Vector MBTiles (SQLite) — Tương thích tiêu chuẩn Mapbox
+                <MenuItem value="offline_package">
+                  Gói bản đồ ngoại tuyến (Offline Package)
                 </MenuItem>
               </Select>
             </FormControl>
 
             <FormControl fullWidth size="small">
-              <InputLabel>Hệ tọa độ đích (Target CRS)</InputLabel>
+              <InputLabel>Hệ quy chiếu đích (Target CRS)</InputLabel>
               <Select
                 value={formTargetCrs}
-                label="Hệ tọa độ đích (Target CRS)"
+                label="Hệ quy chiếu đích (Target CRS)"
                 onChange={(e) => setFormTargetCrs(e.target.value)}
               >
-                <MenuItem value="EPSG:3857 (Web Mercator)">
-                  EPSG:3857 (WGS 84 / Pseudo-Mercator) — Tiêu chuẩn bản đồ web
+                <MenuItem value="EPSG:3857 (Chuẩn Web)">
+                  EPSG:3857 (WGS 84 / Web Mercator) — Tiêu chuẩn bản đồ web
                 </MenuItem>
-                <MenuItem value="EPSG:4326 (WGS 84)">EPSG:4326 (WGS 84 Geographic 2D)</MenuItem>
+                <MenuItem value="EPSG:4326 (WGS 84)">EPSG:4326 (WGS 84 Geographic)</MenuItem>
                 <MenuItem value="EPSG:3405 (VN-2000)">EPSG:3405 (VN-2000 / UTM zone 48N)</MenuItem>
               </Select>
             </FormControl>
@@ -729,37 +675,43 @@ export function PipelinePage() {
           <Button variant="outlined" onClick={() => setOpenCreateModal(false)}>
             Hủy
           </Button>
-          <Button variant="contained" startIcon={<Play size={16} />} onClick={handleCreateJob}>
-            Khởi chạy Job
+          <Button variant="contained" startIcon={<Play size={16} />} onClick={handleCreateTask}>
+            Bắt đầu chuyển đổi
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Log Terminal Drawer */}
+      {/* Task Details Drawer (Operational Summary - Safe Production) */}
       <Drawer
         anchor="right"
-        open={logDrawerOpen}
-        onClose={() => setLogDrawerOpen(false)}
-        slotProps={{ paper: { sx: { width: { xs: "100%", sm: 580 }, p: 3 } } }}
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        slotProps={{ paper: { sx: { width: { xs: "100%", sm: 520 }, p: 3 } } }}
       >
-        {selectedJob && (
+        {selectedTask && (
           <Stack spacing={2.5}>
             <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
               <Box>
-                <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                  Log Job: {selectedJob.id}
+                <Typography variant="h6" sx={{ fontWeight: 700, fontSize: "1.2rem" }}>
+                  Tác vụ: {selectedTask.id}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  {selectedJob.datasetName}
+                  {selectedTask.datasetName} ({selectedTask.sourceVersion})
                 </Typography>
               </Box>
               <Chip
-                label={selectedJob.status.toUpperCase()}
+                label={
+                  selectedTask.status === "completed"
+                    ? "HOÀN TẤT"
+                    : selectedTask.status === "running"
+                      ? "ĐANG XỬ LÝ"
+                      : "CẦN KIỂM TRA"
+                }
                 color={
-                  selectedJob.status === "completed"
+                  selectedTask.status === "completed"
                     ? "success"
-                    : selectedJob.status === "failed"
-                      ? "error"
+                    : selectedTask.status === "needs_check"
+                      ? "warning"
                       : "primary"
                 }
                 size="small"
@@ -768,68 +720,89 @@ export function PipelinePage() {
 
             <Divider />
 
-            {/* Hardware Metrics Monitor */}
-            <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "action.hover" }}>
-              <Typography variant="caption" sx={{ fontWeight: 700, display: "block", mb: 1 }}>
-                Tài nguyên Worker (NFR-08 Enforced)
+            {/* Operational Summary */}
+            <Paper variant="outlined" sx={{ p: 2, bgcolor: "action.hover" }}>
+              <Typography variant="caption" sx={{ fontWeight: 700, display: "block", mb: 1.5 }}>
+                THÔNG TIN TIẾN TRÌNH
               </Typography>
-              <Stack direction="row" spacing={3}>
-                <Box>
+              <Stack spacing={1}>
+                <Stack direction="row" sx={{ justifyContent: "space-between" }}>
                   <Typography variant="caption" color="text.secondary">
-                    CPU Usage
+                    Cấu hình:
                   </Typography>
-                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                    68% (2 vCPU)
+                  <Typography variant="caption" sx={{ fontWeight: 700 }}>
+                    {selectedTask.configLabel}
                   </Typography>
-                </Box>
-                <Box>
+                </Stack>
+                <Stack direction="row" sx={{ justifyContent: "space-between" }}>
                   <Typography variant="caption" color="text.secondary">
-                    RAM Limit
+                    Dung lượng nguồn:
                   </Typography>
-                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                    2.1 GB / 4.0 GB
+                  <Typography variant="caption" sx={{ fontWeight: 700 }}>
+                    {selectedTask.inputSize}
                   </Typography>
-                </Box>
-                <Box>
+                </Stack>
+                <Stack direction="row" sx={{ justifyContent: "space-between" }}>
                   <Typography variant="caption" color="text.secondary">
-                    Scratch Disk
+                    Dung lượng sản phẩm:
                   </Typography>
-                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                    1.2 GB / 10 GB
+                  <Typography variant="caption" sx={{ fontWeight: 700 }}>
+                    {selectedTask.outputSize}
                   </Typography>
-                </Box>
+                </Stack>
+                <Stack direction="row" sx={{ justifyContent: "space-between" }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Thời gian xử lý:
+                  </Typography>
+                  <Typography variant="caption">{selectedTask.duration}</Typography>
+                </Stack>
               </Stack>
             </Paper>
 
-            {/* Terminal Stream */}
+            {/* Milestones History (Safe business steps) */}
             <Box>
-              <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: "block" }}>
-                Terminal Output Console
+              <Typography variant="caption" sx={{ fontWeight: 700, display: "block", mb: 1.5 }}>
+                CÁC BƯỚC THỰC HIỆN
               </Typography>
-              <Box className="terminal-stream" sx={{ maxHeight: 420, overflowY: "auto" }}>
-                {selectedJob.logs.map((logLine, index) => (
-                  <div key={index} style={{ marginBottom: 4 }}>
-                    {logLine}
-                  </div>
+              <Stack spacing={1.5}>
+                {selectedTask.stepsHistory.map((step, idx) => (
+                  <Paper key={idx} variant="outlined" sx={{ p: 1.5 }}>
+                    <Stack
+                      direction="row"
+                      sx={{ justifyContent: "space-between", alignItems: "center" }}
+                    >
+                      <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                        {step.status === "done" && <CheckCircle2 size={16} color="#16a34a" />}
+                        {step.status === "in_progress" && <Clock size={16} color="#0284c7" />}
+                        {step.status === "error" && <AlertCircle size={16} color="#d97706" />}
+                        <Typography variant="body2" sx={{ fontSize: "0.875rem", fontWeight: 600 }}>
+                          {step.label}
+                        </Typography>
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">
+                        {step.timestamp}
+                      </Typography>
+                    </Stack>
+                  </Paper>
                 ))}
-              </Box>
+              </Stack>
             </Box>
 
             <Stack direction="row" spacing={1.5} sx={{ justifyContent: "flex-end", mt: 2 }}>
-              {selectedJob.status === "failed" && (
+              {selectedTask.status === "needs_check" && (
                 <Button
                   variant="contained"
                   color="warning"
                   startIcon={<RotateCcw size={15} />}
                   onClick={() => {
-                    handleRetryJob(selectedJob.id);
-                    setLogDrawerOpen(false);
+                    handleRetryTask(selectedTask.id);
+                    setDrawerOpen(false);
                   }}
                 >
-                  Thử lại Job này
+                  Thử lại tác vụ
                 </Button>
               )}
-              <Button variant="outlined" onClick={() => setLogDrawerOpen(false)}>
+              <Button variant="outlined" onClick={() => setDrawerOpen(false)}>
                 Đóng
               </Button>
             </Stack>

@@ -32,22 +32,14 @@ import {
   Archive,
   CheckCircle2,
   Database,
-  Download,
-  FileBox,
-  FileSpreadsheet,
   FileUp,
-  FolderOpen,
   FolderUp,
-  HardDrive,
   Info,
-  Layers,
-  MapPin,
-  Play,
   Plus,
   Search,
   ShieldCheck,
-  Tag,
   UploadCloud,
+  Workflow,
 } from "lucide-react";
 import { useI18n } from "../i18n";
 
@@ -56,17 +48,17 @@ export type DatasetItem = {
   name: string;
   description: string;
   format: "GeoTIFF" | "GeoPackage" | "OSM PBF" | "MBTiles" | "Shapefile";
-  category: "raster" | "vector" | "elevation";
   size: string;
   crs: string;
   bounds: string;
   layersOrBands: string;
+  source: string;
+  license: string;
   versionsCount: number;
   latestVersion: string;
   checksum: string;
-  storageUri: string;
   tags: string[];
-  status: "ready" | "processing" | "archived";
+  status: "ready" | "uploading" | "needs_check" | "archived";
   updatedAt: string;
 };
 
@@ -76,16 +68,16 @@ const initialDatasets: DatasetItem[] = [
     name: "Ảnh vệ tinh Hà Nội 2026 (0.5m)",
     description: "Bộ ảnh trực giao toàn bộ khu vực trung tâm và mở rộng Hà Nội độ phân giải 50cm",
     format: "GeoTIFF",
-    category: "raster",
     size: "1.42 GB",
     crs: "EPSG:32648 (WGS 84 / UTM zone 48N)",
     bounds: "[105.71, 20.91, 105.93, 21.15]",
     layersOrBands: "4 bands (RGB + NIR)",
+    source: "Trung tâm Dữ liệu Không gian",
+    license: "Nội bộ / Sử dụng nghiệp vụ",
     versionsCount: 2,
     latestVersion: "v2.1",
     checksum: "d41d8cd98f00b204e9800998ecf8427e",
-    storageUri: "s3://raw-datasets/hanoi_imagery_2026_v2.1.tif",
-    tags: ["Satellite", "Hà Nội", "Ortho", "High-Res"],
+    tags: ["Vệ tinh", "Hà Nội", "Ảnh trực giao"],
     status: "ready",
     updatedAt: "Hôm nay, 10:24",
   },
@@ -95,16 +87,16 @@ const initialDatasets: DatasetItem[] = [
     description:
       "Dữ liệu phân định ranh giới 3 cấp: Tỉnh/Thành phố, Quận/Huyện, Xã/Phường chuẩn quốc gia",
     format: "GeoPackage",
-    category: "vector",
     size: "480 MB",
     crs: "EPSG:3405 (VN-2000 / UTM zone 48N)",
     bounds: "[102.14, 8.18, 109.46, 23.39]",
     layersOrBands: "3 layers (adm1, adm2, adm3)",
+    source: "Bộ Tài nguyên & Môi trường",
+    license: "Chính thức / Lưu hành nội bộ",
     versionsCount: 4,
     latestVersion: "v1.4",
     checksum: "7c222fb2927d828af22f592134e89324",
-    storageUri: "s3://raw-datasets/vn_admin_boundaries_v1.4.gpkg",
-    tags: ["Boundaries", "Toàn quốc", "Official", "Vector"],
+    tags: ["Ranh giới", "Toàn quốc", "Chính thức"],
     status: "ready",
     updatedAt: "08/10/2026",
   },
@@ -113,16 +105,16 @@ const initialDatasets: DatasetItem[] = [
     name: "Dữ liệu giao thông OpenStreetMap Vietnam PBF",
     description: "Dữ liệu vector giao thông đường bộ, thủy văn, địa danh chiết xuất từ OSM",
     format: "OSM PBF",
-    category: "vector",
     size: "3.1 GB",
     crs: "EPSG:4326 (WGS 84 Geographic)",
     bounds: "[102.0, 8.0, 110.0, 24.0]",
-    layersOrBands: "Toàn bộ OSM Feature Types",
+    layersOrBands: "Toàn bộ lớp dữ liệu giao thông",
+    source: "OpenStreetMap Contributors",
+    license: "ODbL 1.0",
     versionsCount: 1,
     latestVersion: "v1.0",
     checksum: "9e107d9d372bb6826bd81d3542a419d6",
-    storageUri: "s3://raw-datasets/osm_vietnam_extract_2026.osm.pbf",
-    tags: ["OSM", "Roads", "Vietnam", "PBF"],
+    tags: ["Giao thông", "Việt Nam", "Vector"],
     status: "ready",
     updatedAt: "05/10/2026",
   },
@@ -132,22 +124,22 @@ const initialDatasets: DatasetItem[] = [
     description:
       "Dữ liệu độ cao địa hình khu vực Tây Nguyên phục vụ phân tích độ dốc và tạo hillshade",
     format: "GeoTIFF",
-    category: "elevation",
     size: "2.8 GB",
     crs: "EPSG:4326 (WGS 84 Geographic)",
     bounds: "[107.2, 11.5, 108.9, 14.8]",
     layersOrBands: "1 band (Float32 Elevation)",
+    source: "Khảo sát Địa hình Quốc gia",
+    license: "Nội bộ",
     versionsCount: 1,
     latestVersion: "v1.0",
     checksum: "c33367701511b4f6020ec61ded352059",
-    storageUri: "s3://raw-datasets/dem_taynguyen_30m.tif",
-    tags: ["DEM", "Elevation", "Tây Nguyên", "Terrain"],
+    tags: ["Độ cao", "Địa hình", "Tây Nguyên"],
     status: "ready",
     updatedAt: "01/10/2026",
   },
 ];
 
-export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () => void }) {
+export function DatasetsPage({ onNavigateConvert }: { onNavigateConvert?: () => void }) {
   const { t } = useI18n();
   const [datasets, setDatasets] = useState<DatasetItem[]>(initialDatasets);
   const [searchQuery, setSearchQuery] = useState("");
@@ -171,9 +163,7 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
   const [formCrs, setFormCrs] = useState("EPSG:3857");
   const [formTags, setFormTags] = useState("");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [internalPath, setInternalPath] = useState(
-    "/mnt/geodata_shared/raw/danang_imagery_2026.tif"
-  );
+  const [internalPath, setInternalPath] = useState("danang_ortho_2026.tif");
 
   const filteredDatasets = datasets.filter((ds) => {
     const matchesFormat = formatFilter === "all" || ds.format === formatFilter;
@@ -186,28 +176,27 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
 
   const handleStartUpload = () => {
     setUploading(true);
-    setUploadProgress(10);
+    setUploadProgress(15);
     const interval = setInterval(() => {
       setUploadProgress((prev) => {
         if (prev >= 100) {
           clearInterval(interval);
           setUploading(false);
-          // Add to dataset list
           const newDs: DatasetItem = {
             id: `DS-${String(datasets.length + 1).padStart(3, "0")}`,
-            name: formName || "Dataset Mới Upload",
-            description: formDescription || "Dữ liệu tải lên thông qua Multipart Presigned S3",
+            name: formName || "Dữ liệu nguồn mới",
+            description: formDescription || "Dữ liệu tiếp nhận thông qua cơ chế tải lên phân đoạn",
             format: formFormat,
-            category: formFormat === "GeoTIFF" ? "raster" : "vector",
             size: "620 MB",
             crs: formCrs,
             bounds: "[105.80, 21.00, 105.85, 21.05]",
             layersOrBands: formFormat === "GeoTIFF" ? "3 bands (RGB)" : "1 layer",
+            source: "Quản trị viên tải lên",
+            license: "Nội bộ",
             versionsCount: 1,
             latestVersion: "v1.0",
             checksum: "a1b2c3d4e5f60718293a4b5c6d7e8f90",
-            storageUri: `s3://raw-datasets/${formName.toLowerCase().replace(/\s+/g, "_")}_v1.0.raw`,
-            tags: formTags ? formTags.split(",").map((s) => s.trim()) : ["Custom", formFormat],
+            tags: formTags ? formTags.split(",").map((s) => s.trim()) : ["Mới", formFormat],
             status: "ready",
             updatedAt: "Vừa xong",
           };
@@ -218,12 +207,12 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
             setUploadProgress(0);
             setSelectedFile(null);
             setFormName("");
-          }, 800);
+          }, 600);
           return 100;
         }
         return prev + 25;
       });
-    }, 400);
+    }, 350);
   };
 
   const handleInternalImport = () => {
@@ -231,23 +220,29 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
     const imported: DatasetItem = {
       id: `DS-${String(datasets.length + 1).padStart(3, "0")}`,
       name: "Ảnh vệ tinh Đà Nẵng 2026 (Import nội bộ)",
-      description: `Đã import từ đường dẫn hạ tầng: ${internalPath} (FR-08)`,
+      description: "Tiếp nhận từ hạ tầng mạng nội bộ",
       format: "GeoTIFF",
-      category: "raster",
       size: "850 MB",
       crs: "EPSG:32648 (WGS 84 / UTM zone 48N)",
       bounds: "[108.15, 15.95, 108.35, 16.15]",
       layersOrBands: "4 bands (RGB + NIR)",
+      source: "Hệ thống nội bộ",
+      license: "Nội bộ",
       versionsCount: 1,
       latestVersion: "v1.0",
       checksum: "ff88112233445566778899aabbccddeeff",
-      storageUri: "s3://raw-datasets/danang_imagery_2026.tif",
-      tags: ["Đà Nẵng", "Internal-Import", "GeoTIFF"],
+      tags: ["Đà Nẵng", "Import nội bộ"],
       status: "ready",
       updatedAt: "Vừa xong",
     };
     setDatasets([imported, ...datasets]);
     setOpenImportModal(false);
+  };
+
+  const handleArchive = (id: string) => {
+    setDatasets((prev) =>
+      prev.map((d) => (d.id === id ? { ...d, status: "archived" as const } : d))
+    );
   };
 
   const handleOpenDetail = (ds: DatasetItem) => {
@@ -257,25 +252,35 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
 
   return (
     <Stack spacing={3}>
-      {/* Header section */}
+      {/* Header section (Section 4.1 & Section 6 Typography) */}
       <Stack
         direction={{ xs: "column", sm: "row" }}
         spacing={2}
         sx={{ justifyContent: "space-between", alignItems: { sm: "flex-end" } }}
       >
         <Box>
-          <Typography variant="h4">{t("datasets.title")}</Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+          <Typography
+            variant="h4"
+            sx={{ fontSize: { xs: 24, sm: 27 }, fontWeight: 700, letterSpacing: "-0.02em" }}
+          >
+            {t("datasets.title")}
+          </Typography>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ mt: 0.5, fontSize: "0.9375rem" }}
+          >
             {t("datasets.description")}
           </Typography>
         </Box>
+
         <Stack direction="row" spacing={1.2}>
           <Button
             variant="outlined"
             startIcon={<FolderUp size={16} />}
             onClick={() => setOpenImportModal(true)}
           >
-            {t("datasets.import")} (Mạng nội bộ)
+            {t("datasets.import")}
           </Button>
           <Button
             variant="contained"
@@ -285,43 +290,32 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
               setOpenUploadModal(true);
             }}
           >
-            {t("datasets.new")} (Upload lớn)
+            {t("datasets.new")}
           </Button>
         </Stack>
       </Stack>
 
-      {/* Storage Information Banner */}
-      <Paper
-        variant="outlined"
-        sx={{
-          p: 2,
-          bgcolor: "action.hover",
-          display: "flex",
-          flexWrap: "wrap",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 2,
-        }}
+      {/* Two Security / Business Badges (Section 4.3 in UI.md) */}
+      <Stack
+        direction="row"
+        spacing={1.5}
+        sx={{ alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
       >
-        <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-          <Box sx={{ p: 1, borderRadius: 2, bgcolor: "secondary.light", color: "secondary.dark" }}>
-            <HardDrive size={20} />
-          </Box>
-          <Box>
-            <Typography variant="body2" sx={{ fontWeight: 700 }}>
-              Lưu trữ SeaweedFS S3 (Air-gapped Object Storage)
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              Bucket: <code style={{ color: "#0d9488" }}>s3://raw-datasets</code> · Tách riêng với
-              derived tilesets để bảo đảm tính bất biến (Immutable).
-            </Typography>
-          </Box>
-        </Stack>
-        <Stack direction="row" spacing={1}>
-          <Chip icon={<ShieldCheck size={14} />} label="Raw Data Immutable" size="small" />
-          <Chip icon={<FileUp size={14} />} label="Audited & Versioned" size="small" />
-        </Stack>
-      </Paper>
+        <Chip
+          icon={<ShieldCheck size={14} color="#0d9488" />}
+          label={t("datasets.immutable")}
+          size="small"
+          variant="outlined"
+          sx={{ fontWeight: 650, borderColor: "divider" }}
+        />
+        <Chip
+          icon={<FileUp size={14} color="#0d9488" />}
+          label={t("datasets.audited")}
+          size="small"
+          variant="outlined"
+          sx={{ fontWeight: 650, borderColor: "divider" }}
+        />
+      </Stack>
 
       {/* Filter and Search Bar */}
       <Paper variant="outlined" sx={{ p: 2 }}>
@@ -333,8 +327,8 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
           <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", rowGap: 1 }}>
             {[
               { key: "all", label: "Tất cả (" + datasets.length + ")" },
-              { key: "GeoTIFF", label: "GeoTIFF (Raster)" },
-              { key: "GeoPackage", label: "GeoPackage (Vector)" },
+              { key: "GeoTIFF", label: "GeoTIFF" },
+              { key: "GeoPackage", label: "GeoPackage" },
               { key: "OSM PBF", label: "OSM PBF" },
               { key: "MBTiles", label: "MBTiles" },
             ].map((f) => (
@@ -368,93 +362,166 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
         </Stack>
       </Paper>
 
-      {/* Datasets Table */}
-      <TableContainer component={Paper} variant="outlined">
-        <Table sx={{ minWidth: 800 }}>
-          <TableHead>
-            <TableRow>
-              <TableCell>Tên Dataset & Mã</TableCell>
-              <TableCell>Định dạng</TableCell>
-              <TableCell>Dung lượng</TableCell>
-              <TableCell>Hệ tọa độ (CRS)</TableCell>
-              <TableCell>Phiên bản</TableCell>
-              <TableCell>Trạng thái</TableCell>
-              <TableCell align="right">Hành động</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {filteredDatasets.length === 0 ? (
+      {/* Empty State (Section 4.4 in UI.md) or Datasets Table */}
+      {filteredDatasets.length === 0 ? (
+        <Paper
+          variant="outlined"
+          sx={{
+            py: 7,
+            px: 3,
+            textAlign: "center",
+            display: "grid",
+            placeItems: "center",
+          }}
+        >
+          <Box sx={{ maxWidth: 460 }}>
+            <Box
+              sx={{
+                width: 56,
+                height: 56,
+                borderRadius: 3,
+                bgcolor: "action.hover",
+                color: "text.secondary",
+                display: "grid",
+                placeItems: "center",
+                mx: "auto",
+                mb: 2,
+              }}
+            >
+              <Database size={28} />
+            </Box>
+            <Typography variant="h6" sx={{ fontSize: "1.15rem", fontWeight: 700 }}>
+              {t("datasets.empty")}
+            </Typography>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ mt: 0.75, mb: 2.5, lineHeight: 1.6 }}
+            >
+              {t("datasets.emptyDescription")}
+            </Typography>
+            <Button
+              variant="contained"
+              startIcon={<Plus size={16} />}
+              onClick={() => {
+                setUploadStep(1);
+                setOpenUploadModal(true);
+              }}
+            >
+              {t("datasets.new")}
+            </Button>
+          </Box>
+        </Paper>
+      ) : (
+        <TableContainer component={Paper} variant="outlined">
+          <Table sx={{ minWidth: 800 }}>
+            <TableHead>
               <TableRow>
-                <TableCell colSpan={7} sx={{ textAlign: "center", py: 5 }}>
-                  <Typography color="text.secondary">Không tìm thấy dataset nào phù hợp</Typography>
-                </TableCell>
+                <TableCell>Dataset</TableCell>
+                <TableCell>Định dạng</TableCell>
+                <TableCell>Phiên bản mới nhất</TableCell>
+                <TableCell>Dung lượng</TableCell>
+                <TableCell>Trạng thái</TableCell>
+                <TableCell align="right">Hành động</TableCell>
               </TableRow>
-            ) : (
-              filteredDatasets.map((ds) => (
+            </TableHead>
+            <TableBody>
+              {filteredDatasets.map((ds) => (
                 <TableRow key={ds.id} hover>
+                  {/* Dataset Name, description, tags */}
                   <TableCell>
-                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                    <Typography variant="body2" sx={{ fontWeight: 650, fontSize: "0.9375rem" }}>
                       {ds.name}
                     </Typography>
-                    <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                      {ds.id} · {ds.description.slice(0, 55)}...
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ display: "block", fontSize: "0.8125rem", mt: 0.25 }}
+                    >
+                      {ds.description}
                     </Typography>
-                    <Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }}>
-                      {ds.tags.map((t, i) => (
+                    <Stack
+                      direction="row"
+                      spacing={0.6}
+                      sx={{ mt: 0.75, flexWrap: "wrap", rowGap: 0.5 }}
+                    >
+                      {ds.tags.map((tag, i) => (
                         <Chip
                           key={i}
-                          label={t}
+                          label={tag}
                           size="small"
                           variant="outlined"
-                          sx={{ fontSize: 10, height: 20 }}
+                          sx={{ fontSize: "0.75rem", height: 22 }}
                         />
                       ))}
                     </Stack>
                   </TableCell>
+
+                  {/* Format */}
                   <TableCell>
                     <Chip
                       label={ds.format}
                       size="small"
-                      color={ds.format === "GeoTIFF" ? "primary" : "secondary"}
+                      color="default"
                       variant="outlined"
-                      sx={{ fontWeight: 700 }}
+                      sx={{ fontWeight: 650, fontSize: "0.8125rem" }}
                     />
                   </TableCell>
+
+                  {/* Latest Version & Updated Time */}
                   <TableCell>
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      {ds.size}
+                    <Typography variant="body2" sx={{ fontWeight: 700, fontSize: "0.875rem" }}>
+                      {ds.latestVersion}
                     </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="caption" sx={{ fontFamily: "monospace" }}>
-                      {ds.crs.split(" ")[0]}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                      {ds.layersOrBands}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Chip label={ds.latestVersion} size="small" />
                     <Typography
                       variant="caption"
                       color="text.secondary"
-                      sx={{ display: "block", mt: 0.2 }}
+                      sx={{ fontSize: "0.78125rem", display: "block" }}
                     >
-                      {ds.versionsCount} version
+                      {ds.updatedAt}
                     </Typography>
                   </TableCell>
+
+                  {/* Size */}
                   <TableCell>
-                    <Chip
-                      icon={<CheckCircle2 size={13} />}
-                      label="Sẵn sàng"
-                      size="small"
-                      color="success"
-                      sx={{ fontWeight: 700 }}
-                    />
+                    <Typography variant="body2" sx={{ fontWeight: 600, fontSize: "0.875rem" }}>
+                      {ds.size}
+                    </Typography>
                   </TableCell>
+
+                  {/* Status */}
+                  <TableCell>
+                    {ds.status === "ready" && (
+                      <Chip
+                        icon={<CheckCircle2 size={13} />}
+                        label="Sẵn sàng"
+                        size="small"
+                        color="success"
+                        sx={{ fontWeight: 650, fontSize: "0.75rem" }}
+                      />
+                    )}
+                    {ds.status === "uploading" && (
+                      <Chip
+                        label="Đang tải lên"
+                        size="small"
+                        color="primary"
+                        sx={{ fontWeight: 650, fontSize: "0.75rem" }}
+                      />
+                    )}
+                    {ds.status === "archived" && (
+                      <Chip
+                        label="Đã lưu trữ"
+                        size="small"
+                        variant="outlined"
+                        sx={{ fontSize: "0.75rem" }}
+                      />
+                    )}
+                  </TableCell>
+
+                  {/* Actions (Section 4.3 in UI.md) */}
                   <TableCell align="right">
                     <Stack direction="row" spacing={0.8} sx={{ justifyContent: "flex-end" }}>
-                      <Tooltip title="Xem thông tin chi tiết & lịch sử version">
+                      <Tooltip title="Xem chi tiết metadata và phiên bản">
                         <Button
                           size="small"
                           variant="outlined"
@@ -464,43 +531,60 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
                           Chi tiết
                         </Button>
                       </Tooltip>
-                      <Tooltip title="Tạo Job xử lý GDAL từ dataset này">
+
+                      <Tooltip title="Tạo tác vụ chuyển đổi dữ liệu">
                         <Button
                           size="small"
                           variant="contained"
-                          startIcon={<Play size={14} />}
+                          startIcon={<Workflow size={14} />}
                           onClick={() => {
-                            if (onNavigatePipeline) onNavigatePipeline();
+                            if (onNavigateConvert) onNavigateConvert();
                           }}
                         >
-                          GDAL Job
+                          Chuyển đổi
                         </Button>
                       </Tooltip>
+
+                      {ds.status !== "archived" && (
+                        <Tooltip title="Lưu trữ phiên bản">
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            color="inherit"
+                            onClick={() => handleArchive(ds.id)}
+                          >
+                            <Archive size={14} />
+                          </Button>
+                        </Tooltip>
+                      )}
                     </Stack>
                   </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
 
-      {/* Dataset Metadata Inspector Drawer */}
+      {/* Dataset Detail Drawer (Section 4.3 in UI.md - Business Metadata only) */}
       <Drawer
         anchor="right"
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        slotProps={{ paper: { sx: { width: { xs: "100%", sm: 540 }, p: 3 } } }}
+        slotProps={{ paper: { sx: { width: { xs: "100%", sm: 520 }, p: 3 } } }}
       >
         {selectedDataset && (
           <Stack spacing={2.5}>
-            <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
+            <Stack
+              direction="row"
+              sx={{ justifyContent: "space-between", alignItems: "flex-start" }}
+            >
               <Box>
-                <Typography variant="h6" sx={{ fontWeight: 800 }}>
+                <Typography variant="h6" sx={{ fontSize: "1.2rem", fontWeight: 700 }}>
                   {selectedDataset.name}
                 </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {selectedDataset.id} · Cập nhật: {selectedDataset.updatedAt}
+                <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.8125rem" }}>
+                  Mã: {selectedDataset.id} · Cập nhật: {selectedDataset.updatedAt}
                 </Typography>
               </Box>
               <Chip label={selectedDataset.latestVersion} color="primary" size="small" />
@@ -508,16 +592,22 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
 
             <Divider />
 
-            <Typography variant="body2">{selectedDataset.description}</Typography>
+            <Typography variant="body2" sx={{ lineHeight: 1.6 }}>
+              {selectedDataset.description}
+            </Typography>
 
+            {/* Business Metadata Grid */}
             <Paper variant="outlined" sx={{ p: 2, bgcolor: "action.hover" }}>
-              <Typography variant="caption" sx={{ fontWeight: 700, display: "block", mb: 1 }}>
-                METADATA ĐỊA KHÔNG GIAN (FR-10)
+              <Typography
+                variant="caption"
+                sx={{ fontWeight: 700, fontSize: "0.8125rem", display: "block", mb: 1.5 }}
+              >
+                THÔNG TIN DỮ LIỆU NGUỒN
               </Typography>
               <Stack spacing={1}>
                 <Stack direction="row" sx={{ justifyContent: "space-between" }}>
                   <Typography variant="caption" color="text.secondary">
-                    Định dạng file:
+                    Định dạng:
                   </Typography>
                   <Typography variant="caption" sx={{ fontWeight: 700 }}>
                     {selectedDataset.format}
@@ -525,7 +615,7 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
                 </Stack>
                 <Stack direction="row" sx={{ justifyContent: "space-between" }}>
                   <Typography variant="caption" color="text.secondary">
-                    Dung lượng raw:
+                    Dung lượng:
                   </Typography>
                   <Typography variant="caption" sx={{ fontWeight: 700 }}>
                     {selectedDataset.size}
@@ -541,7 +631,7 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
                 </Stack>
                 <Stack direction="row" sx={{ justifyContent: "space-between" }}>
                   <Typography variant="caption" color="text.secondary">
-                    Ranh giới (Bounding Box):
+                    Phạm vi không gian (Bounds):
                   </Typography>
                   <Typography variant="caption" sx={{ fontFamily: "monospace" }}>
                     {selectedDataset.bounds}
@@ -557,7 +647,19 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
                 </Stack>
                 <Stack direction="row" sx={{ justifyContent: "space-between" }}>
                   <Typography variant="caption" color="text.secondary">
-                    Mã Checksum (MD5):
+                    Nguồn gốc:
+                  </Typography>
+                  <Typography variant="caption">{selectedDataset.source}</Typography>
+                </Stack>
+                <Stack direction="row" sx={{ justifyContent: "space-between" }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Giấy phép (License):
+                  </Typography>
+                  <Typography variant="caption">{selectedDataset.license}</Typography>
+                </Stack>
+                <Stack direction="row" sx={{ justifyContent: "space-between" }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Kiểm toán Checksum (MD5):
                   </Typography>
                   <Typography variant="caption" sx={{ fontFamily: "monospace" }}>
                     {selectedDataset.checksum}
@@ -566,21 +668,13 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
               </Stack>
             </Paper>
 
-            <Box sx={{ p: 1.5, bgcolor: "action.hover", borderRadius: 2 }}>
-              <Typography variant="caption" sx={{ fontWeight: 700, display: "block" }}>
-                Đường dẫn Object Storage SeaweedFS (NFR-03):
-              </Typography>
+            {/* Version History */}
+            <Box>
               <Typography
                 variant="caption"
-                sx={{ fontFamily: "monospace", color: "secondary.main" }}
+                sx={{ fontWeight: 700, fontSize: "0.8125rem", display: "block", mb: 1 }}
               >
-                {selectedDataset.storageUri}
-              </Typography>
-            </Box>
-
-            <Box>
-              <Typography variant="caption" sx={{ fontWeight: 700, display: "block", mb: 1 }}>
-                LỊCH SỬ RAW ASSET VERSIONS (FR-09, FR-11)
+                LỊCH SỬ PHIÊN BẢN
               </Typography>
               <TableContainer component={Paper} variant="outlined">
                 <Table size="small">
@@ -588,28 +682,28 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
                     <TableRow>
                       <TableCell>Phiên bản</TableCell>
                       <TableCell>Thời điểm</TableCell>
-                      <TableCell>Kích thước</TableCell>
+                      <TableCell>Dung lượng</TableCell>
                       <TableCell align="right">Trạng thái</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     <TableRow>
                       <TableCell sx={{ fontWeight: 700 }}>
-                        {selectedDataset.latestVersion} (Hiện tại)
+                        {selectedDataset.latestVersion}
                       </TableCell>
                       <TableCell>{selectedDataset.updatedAt}</TableCell>
                       <TableCell>{selectedDataset.size}</TableCell>
                       <TableCell align="right">
-                        <Chip label="Active" size="small" color="success" />
+                        <Chip label="Hiện tại" size="small" color="success" />
                       </TableCell>
                     </TableRow>
                     {selectedDataset.versionsCount > 1 && (
                       <TableRow>
-                        <TableCell>v1.0 (Lưu trữ)</TableCell>
+                        <TableCell>v1.0</TableCell>
                         <TableCell>Tháng trước</TableCell>
                         <TableCell>1.35 GB</TableCell>
                         <TableCell align="right">
-                          <Chip label="Archived" size="small" variant="outlined" />
+                          <Chip label="Đã lưu trữ" size="small" variant="outlined" />
                         </TableCell>
                       </TableRow>
                     )}
@@ -624,46 +718,44 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
               </Button>
               <Button
                 variant="contained"
-                startIcon={<Play size={16} />}
+                startIcon={<Workflow size={16} />}
                 onClick={() => {
                   setDrawerOpen(false);
-                  if (onNavigatePipeline) onNavigatePipeline();
+                  if (onNavigateConvert) onNavigateConvert();
                 }}
               >
-                Chuyển sang GDAL Pipeline
+                Tạo tác vụ chuyển đổi
               </Button>
             </Stack>
           </Stack>
         )}
       </Drawer>
 
-      {/* Multipart Presigned Upload Modal (FR-07, FR-42) */}
+      {/* Upload Modal (Section 4.1 in UI.md) */}
       <Dialog
         open={openUploadModal}
         onClose={() => !uploading && setOpenUploadModal(false)}
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle sx={{ fontWeight: 800 }}>
-          {uploadStep === 1
-            ? "1. Khai báo Dataset mới"
-            : "2. Upload file lớn (Multipart Presigned URL)"}
+        <DialogTitle sx={{ fontWeight: 700, fontSize: "1.15rem" }}>
+          {uploadStep === 1 ? "1. Khai báo dữ liệu nguồn" : "2. Tải lên tệp dữ liệu"}
         </DialogTitle>
         <DialogContent dividers>
           {uploadStep === 1 ? (
             <Stack spacing={2.5}>
-              <Alert severity="info" sx={{ fontSize: 13 }}>
-                Browser không truy cập trực tiếp credential S3. Khi tải lên, hệ thống sẽ cấp
-                presigned multipart URL tạm thời để upload dữ liệu an toàn.
-              </Alert>
+              <Typography variant="body2" color="text.secondary">
+                Tạo bản ghi dữ liệu nguồn mới và cấu hình thuộc tính trước khi chuyển đổi thành bản
+                đồ.
+              </Typography>
 
               <TextField
-                label="Tên Dataset"
+                label="Tên dữ liệu nguồn"
                 fullWidth
                 size="small"
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
-                placeholder="Ví dụ: Ảnh trực giao Cần Thơ 2026"
+                placeholder="Ví dụ: Bản đồ Giao thông Cần Thơ"
               />
 
               <TextField
@@ -674,14 +766,14 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
                 size="small"
                 value={formDescription}
                 onChange={(e) => setFormDescription(e.target.value)}
-                placeholder="Mô tả nguồn gốc dữ liệu, độ phân giải, mục đích sử dụng..."
+                placeholder="Mô tả nguồn gốc dữ liệu, phạm vi không gian, mục đích sử dụng..."
               />
 
               <FormControl fullWidth size="small">
-                <InputLabel>Định dạng dữ liệu nguồn</InputLabel>
+                <InputLabel>Định dạng dữ liệu</InputLabel>
                 <Select
                   value={formFormat}
-                  label="Định dạng dữ liệu nguồn"
+                  label="Định dạng dữ liệu"
                   onChange={(e) =>
                     setFormFormat(
                       e.target.value as
@@ -693,19 +785,11 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
                     )
                   }
                 >
-                  <MenuItem value="GeoTIFF">
-                    GeoTIFF (.tif, .tiff) — Raster ảnh vệ tinh / DEM
-                  </MenuItem>
-                  <MenuItem value="GeoPackage">
-                    GeoPackage (.gpkg) — Vector đa lớp chuẩn OGC
-                  </MenuItem>
-                  <MenuItem value="OSM PBF">
-                    OSM PBF (.osm.pbf) — OpenStreetMap Protocolbuffer
-                  </MenuItem>
-                  <MenuItem value="MBTiles">
-                    MBTiles (.mbtiles) — SQLite vector/raster tiles
-                  </MenuItem>
-                  <MenuItem value="Shapefile">ESRI Shapefile (.zip) — Vector lưu trữ nén</MenuItem>
+                  <MenuItem value="GeoTIFF">GeoTIFF (.tif, .tiff)</MenuItem>
+                  <MenuItem value="GeoPackage">GeoPackage (.gpkg)</MenuItem>
+                  <MenuItem value="OSM PBF">OSM PBF (.osm.pbf)</MenuItem>
+                  <MenuItem value="MBTiles">MBTiles (.mbtiles)</MenuItem>
+                  <MenuItem value="Shapefile">ESRI Shapefile (.zip)</MenuItem>
                 </Select>
               </FormControl>
 
@@ -715,16 +799,16 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
                 size="small"
                 value={formCrs}
                 onChange={(e) => setFormCrs(e.target.value)}
-                helperText="Mặc định: EPSG:3857 hoặc EPSG:4326. GDAL sẽ tự động đọc từ header file."
+                helperText="Mặc định: EPSG:3857 hoặc EPSG:4326."
               />
 
               <TextField
-                label="Thẻ phân loại (Tags, cách nhau bằng dấu phẩy)"
+                label="Thẻ phân loại (Tags, phân cách bằng dấu phẩy)"
                 fullWidth
                 size="small"
                 value={formTags}
                 onChange={(e) => setFormTags(e.target.value)}
-                placeholder="Ví dụ: Vệ tinh, Đô thị, 2026, Cần Thơ"
+                placeholder="Ví dụ: Đô thị, 2026, Cần Thơ"
               />
             </Stack>
           ) : (
@@ -739,21 +823,18 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
                   bgcolor: "action.hover",
                   cursor: "pointer",
                 }}
-                onClick={() => setSelectedFile("cantho_imagery_2026_raw.tif (620 MB)")}
+                onClick={() => setSelectedFile("cantho_imagery_2026.tif (620 MB)")}
               >
                 <UploadCloud size={40} color="#d32f2f" style={{ margin: "0 auto 12px" }} />
-                <Typography variant="body1" sx={{ fontWeight: 700 }}>
-                  {selectedFile
-                    ? selectedFile
-                    : "Kéo thả file geodata lớn vào đây hoặc bấm để chọn file"}
+                <Typography variant="body1" sx={{ fontWeight: 650 }}>
+                  {selectedFile ? selectedFile : "Kéo thả file vào đây hoặc bấm để chọn"}
                 </Typography>
                 <Typography
                   variant="caption"
                   color="text.secondary"
                   sx={{ display: "block", mt: 0.5 }}
                 >
-                  Hỗ trợ file lên tới 50 GB qua cơ chế chia nhỏ chunk 20MB & tiếp tục khi mất mạng
-                  (Resumable)
+                  Hỗ trợ tải lên tệp lớn thông qua cơ chế phân đoạn an toàn (Resumable upload).
                 </Typography>
               </Paper>
 
@@ -761,7 +842,7 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
                 <Stack spacing={1}>
                   <Stack direction="row" sx={{ justifyContent: "space-between" }}>
                     <Typography variant="caption" color="text.secondary">
-                      Đang tải lên SeaweedFS qua Multipart Presigned URL...
+                      Đang xử lý tải lên...
                     </Typography>
                     <Typography variant="caption" sx={{ fontWeight: 700 }}>
                       {uploadProgress}%
@@ -770,7 +851,7 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
                   <LinearProgress
                     variant="determinate"
                     value={uploadProgress}
-                    sx={{ height: 8, borderRadius: 4 }}
+                    sx={{ height: 6, borderRadius: 3 }}
                   />
                 </Stack>
               )}
@@ -797,36 +878,38 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
                 disabled={!selectedFile || uploading}
                 onClick={handleStartUpload}
               >
-                {uploading ? "Đang upload..." : "Bắt đầu tải lên"}
+                {uploading ? "Đang tải lên..." : "Bắt đầu tải lên"}
               </Button>
             </>
           )}
         </DialogActions>
       </Dialog>
 
-      {/* Internal Import Modal (FR-08) */}
+      {/* Internal Import Modal (Section 4.1 in UI.md) */}
       <Dialog
         open={openImportModal}
         onClose={() => setOpenImportModal(false)}
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle sx={{ fontWeight: 800 }}>Import dữ liệu từ mạng nội bộ (FR-08)</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 700, fontSize: "1.15rem" }}>
+          Tiếp nhận dữ liệu từ mạng nội bộ
+        </DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2.5}>
-            <Alert severity="info" sx={{ fontSize: 13 }}>
-              Hỗ trợ import trực tiếp các file dung lượng cực lớn đã có sẵn trên NAS / SAN / Volume
-              nội bộ mà không cần tải qua trình duyệt.
-            </Alert>
+            <Typography variant="body2" color="text.secondary">
+              Tiếp nhận các tệp dữ liệu dung lượng lớn đã sẵn sàng trên hạ tầng mạng nội bộ vào
+              catalog dữ liệu nguồn.
+            </Typography>
 
             <TextField
-              label="Đường dẫn file trên mạng nội bộ / Server"
+              label="Tên định danh tệp dữ liệu"
               fullWidth
               size="small"
               value={internalPath}
               onChange={(e) => setInternalPath(e.target.value)}
-              placeholder="/mnt/geodata_shared/raw/filename.tif"
-              helperText="Hệ thống sẽ copy vào SeaweedFS bucket và tính mã checksum kiểm toán tự động."
+              placeholder="ten_tep_du_lieu.tif"
+              helperText="Hệ thống sẽ xác thực tính toàn vẹn và tạo phiên bản đầu tiên."
             />
           </Stack>
         </DialogContent>
@@ -835,7 +918,7 @@ export function DatasetsPage({ onNavigatePipeline }: { onNavigatePipeline?: () =
             Hủy
           </Button>
           <Button variant="contained" onClick={handleInternalImport}>
-            Xác nhận Import
+            Xác nhận tiếp nhận
           </Button>
         </DialogActions>
       </Dialog>

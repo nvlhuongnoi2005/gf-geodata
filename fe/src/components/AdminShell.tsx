@@ -132,7 +132,7 @@ function LoginMapArtwork() {
       <Stack direction="row" spacing={1.4} sx={{ alignItems: "center", zIndex: 1 }}>
         <BrandMark />
         <Box>
-          <Typography sx={{ fontWeight: 800, fontSize: 18 }}>Geodata Control</Typography>
+          <Typography sx={{ fontWeight: 800, fontSize: 18 }}>GeoForge</Typography>
           <Typography variant="caption" sx={{ opacity: 0.75, display: "block" }}>
             Hệ thống Quản trị Bản đồ & Dữ liệu Không gian
           </Typography>
@@ -176,8 +176,8 @@ function LoginMapArtwork() {
 
       <Stack direction="row" spacing={3} sx={{ position: "relative", zIndex: 1 }}>
         <Signal label={t("brand.offlineReady")} />
-        <Signal label="SeaweedFS S3 Storage" />
-        <Signal label="WebGIS JWT Auth" />
+        <Signal label="Lưu trữ dữ liệu riêng tư" />
+        <Signal label="Xác thực tập trung" />
       </Stack>
     </Box>
   );
@@ -243,7 +243,7 @@ function SessionGate({ children }: { children: ReactNode }) {
               <Box sx={{ display: { md: "none" } }}>
                 <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
                   <BrandMark size={38} />
-                  <Typography sx={{ fontWeight: 800, fontSize: 18 }}>Geodata Control</Typography>
+                  <Typography sx={{ fontWeight: 800, fontSize: 18 }}>GeoForge</Typography>
                 </Stack>
               </Box>
               <Box>
@@ -419,9 +419,9 @@ export function AdminShell() {
         <Stack direction="row" spacing={1.2} sx={{ alignItems: "center" }}>
           <BrandMark size={38} />
           <Box>
-            <Typography sx={{ fontWeight: 800, fontSize: 16 }}>Geodata Control</Typography>
+            <Typography sx={{ fontWeight: 800, fontSize: 16 }}>GeoForge</Typography>
             <Typography variant="caption" color="text.secondary">
-              VHT Spatial Engine · Offline
+              Vận hành dữ liệu bản đồ
             </Typography>
           </Box>
         </Stack>
@@ -635,26 +635,26 @@ export function AdminShell() {
               <Stack spacing={1.2}>
                 <Box sx={{ p: 1, borderRadius: 1.5, bgcolor: "action.hover" }}>
                   <Typography variant="body2" sx={{ fontWeight: 700, fontSize: 13 }}>
-                    GDAL Pipeline: Job #081 đang chạy
+                    Chuyển đổi dữ liệu: Tác vụ #081 đang chạy
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    Đang xử lý overviews cho Ảnh vệ tinh Hà Nội 2026 (68%).
+                    Đang xử lý mức tỷ lệ cho Ảnh vệ tinh Hà Nội 2026 (68%).
                   </Typography>
                 </Box>
                 <Box sx={{ p: 1, borderRadius: 1.5, bgcolor: "action.hover" }}>
                   <Typography variant="body2" sx={{ fontWeight: 700, fontSize: 13 }}>
-                    Map Release đã Publish
+                    Bản phát hành đã cập nhật
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    Bản đồ Nền Quốc Gia Vector v2.1 đã cập nhật vào catalog.
+                    Bản đồ Nền Quốc Gia Vector v2.1 đã đồng bộ vào catalog.
                   </Typography>
                 </Box>
                 <Box sx={{ p: 1, borderRadius: 1.5, bgcolor: "action.hover" }}>
                   <Typography variant="body2" sx={{ fontWeight: 700, fontSize: 13 }}>
-                    SeaweedFS S3 Storage
+                    Hạ tầng lưu trữ
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    Bucket raw-datasets đã kích hoạt kiểm toán hash SHA256.
+                    Vùng dữ liệu riêng tư sẵn sàng hoạt động an toàn.
                   </Typography>
                 </Box>
               </Stack>
@@ -680,8 +680,8 @@ export function AdminShell() {
                 </Typography>
               </Box>
               <Stack direction="row" spacing={0.5} sx={{ flexWrap: "wrap", rowGap: 0.5 }}>
-                <Chip label="Role: Admin" size="small" color="primary" sx={{ fontSize: 11 }} />
-                <Chip label="JWT Auth" size="small" variant="outlined" sx={{ fontSize: 11 }} />
+                <Chip label="Quản trị viên" size="small" color="primary" sx={{ fontSize: 11 }} />
+                <Chip label="Đã xác thực" size="small" variant="outlined" sx={{ fontSize: 11 }} />
               </Stack>
               <Divider />
               <Button
@@ -701,9 +701,9 @@ export function AdminShell() {
 
           {/* Body Pages */}
           <Box sx={{ p: { xs: 2, sm: 3.5 }, maxWidth: 1540, mx: "auto" }}>
-            {activePage === "overview" && <DashboardPage onNavigate={setActivePage} />}
+            {activePage === "overview" && <DashboardPage />}
             {activePage === "datasets" && (
-              <DatasetsPage onNavigatePipeline={() => setActivePage("pipeline")} />
+              <DatasetsPage onNavigateConvert={() => setActivePage("pipeline")} />
             )}
             {activePage === "pipeline" && <PipelinePage />}
             {activePage === "styles" && (

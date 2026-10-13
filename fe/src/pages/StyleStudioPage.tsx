@@ -270,10 +270,18 @@ export function StyleStudioPage() {
         sx={{ justifyContent: "space-between", alignItems: { sm: "flex-end" } }}
       >
         <Box>
-          <Typography variant="h4">{t("style.title")}</Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-            {t("style.description")} Hỗ trợ preview thời gian thực với MapLibre GL và kiểm tra cú
-            pháp Specification v8.
+          <Typography
+            variant="h4"
+            sx={{ fontSize: { xs: 24, sm: 27 }, fontWeight: 700, letterSpacing: "-0.02em" }}
+          >
+            {t("style.title")}
+          </Typography>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ mt: 0.5, fontSize: "0.9375rem" }}
+          >
+            {t("style.description")}
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", rowGap: 1 }}>
