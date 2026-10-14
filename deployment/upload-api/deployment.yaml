@@ -76,9 +76,6 @@ spec:
                 secretKeyRef:
                   name: geodata-upload-s3
                   key: secret-key
-          volumeMounts:
-            - name: tile-cache
-              mountPath: /var/cache/geodata/tiles
             - name: AUTH_JWKS_URL
               valueFrom:
                 secretKeyRef:
@@ -96,6 +93,9 @@ spec:
                   key: audience
             - name: AUTH_ADMIN_ROLE
               value: admin
+          volumeMounts:
+            - name: tile-cache
+              mountPath: /var/cache/geodata/tiles
           readinessProbe:
             httpGet:
               path: /healthz
