@@ -73,6 +73,16 @@ function formatSourceFormat(format: string): string {
   return labels[format] ?? format;
 }
 
+function fileTypeLabel(file: File, unknownLabel: string): string {
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".osm.pbf")) return "OSM PBF";
+  if (name.endsWith(".tif") || name.endsWith(".tiff")) return "GeoTIFF";
+  if (name.endsWith(".gpkg")) return "GeoPackage";
+  if (name.endsWith(".zip")) return "Shapefile";
+  if (name.endsWith(".mbtiles")) return "MBTiles";
+  return file.type || unknownLabel;
+}
+
 function suggestedName(fileName: string): string {
   return fileName.replace(/\.(osm\.pbf|tiff?|gpkg|zip|mbtiles)$/i, "");
 }
@@ -277,7 +287,7 @@ export function DatasetsPage() {
             <Paper component="button" type="button" variant="outlined" onClick={() => fileInputRef.current?.click()} sx={{ width: "100%", p: 3, borderStyle: "dashed", bgcolor: "background.default", color: "text.primary", cursor: "pointer", "&:hover": { borderColor: "primary.main", bgcolor: "action.hover" } }}>
               <UploadCloud size={36} color="#d32f2f" />
               <Typography component="span" sx={{ display: "block", mt: 1.25, fontWeight: 700 }}>{selectedFile ? selectedFile.name : t("datasets.chooseFile")}</Typography>
-              <Typography component="span" variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>{selectedFile ? `${formatFileSize(selectedFile.size)} · ${selectedFile.type || t("datasets.unknownFileType")}` : t("datasets.supportedFormats")}</Typography>
+              <Typography component="span" variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>{selectedFile ? `${formatFileSize(selectedFile.size)} · ${fileTypeLabel(selectedFile, t("datasets.unknownFileType"))}` : t("datasets.supportedFormats")}</Typography>
             </Paper>
             <input ref={fileInputRef} type="file" accept={acceptedFileTypes} hidden onChange={(event) => {
               const file = event.target.files?.[0] ?? null;
