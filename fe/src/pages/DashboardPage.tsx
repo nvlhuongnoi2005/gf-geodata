@@ -1,10 +1,56 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Box, Paper, Stack, Typography } from "@mui/material";
 import { Database, HardDrive, Layers, Workflow } from "lucide-react";
 import { useI18n } from "../i18n";
+import { useAuth } from "../auth";
+
+type ServiceState = "ready" | "degraded" | "unavailable";
+type Summary = {
+  datasets: number;
+  jobs: { queued: number; running: number; failed: number };
+  releases: number;
+  services: Array<{ name: "authentication" | "storage" | "tiles"; state: ServiceState }>;
+};
+
+const serviceLabels: Record<ServiceState, string> = {
+  ready: "Sẵn sàng",
+  degraded: "Suy giảm",
+  unavailable: "Chưa kết nối",
+};
+
+function getServiceState(summary: Summary | null, name: Summary["services"][number]["name"]): ServiceState {
+  return summary?.services.find((service) => service.name === name)?.state ?? "unavailable";
+}
 
 export function DashboardPage() {
   const { t } = useI18n();
+  const { accessToken } = useAuth();
+  const [summary, setSummary] = useState<Summary | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const loadSummary = async () => {
+      try {
+        const response = await fetch("/api/geodata/v1/summary", {
+          credentials: "include",
+          headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Summary unavailable");
+        setSummary((await response.json()) as Summary);
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setSummary(null);
+      }
+    };
+
+    void loadSummary();
+    return () => controller.abort();
+  }, [accessToken]);
+
+  const authState = getServiceState(summary, "authentication");
+  const storageState = getServiceState(summary, "storage");
+  const tilesState = getServiceState(summary, "tiles");
 
   return (
     <Stack spacing={3}>
@@ -37,28 +83,28 @@ export function DashboardPage() {
         <MetricCard
           icon={<Database size={20} />}
           label={t("dashboard.datasets")}
-          value="0"
+          value={summary ? String(summary.datasets) : "—"}
           subtitle={t("dashboard.datasetsDetail")}
           tone="primary"
         />
         <MetricCard
           icon={<Workflow size={20} />}
           label={t("dashboard.jobs")}
-          value="0"
+          value={summary ? `${summary.jobs.running} đang xử lý` : "—"}
           subtitle={t("dashboard.jobsDetail")}
           tone="teal"
         />
         <MetricCard
           icon={<HardDrive size={20} />}
           label={t("dashboard.rawStorage")}
-          value="Chưa có dữ liệu"
+          value={summary ? serviceLabels[storageState] : "—"}
           subtitle={t("dashboard.rawStorageDetail")}
           tone="amber"
         />
         <MetricCard
           icon={<Layers size={20} />}
           label={t("dashboard.releases")}
-          value="0"
+          value={summary ? String(summary.releases) : "—"}
           subtitle={t("dashboard.releasesDetail")}
           tone="slate"
         />
@@ -78,13 +124,15 @@ export function DashboardPage() {
           {t("dashboard.health")}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ fontSize: "0.875rem", mb: 2.5 }}>
-          Trạng thái sẽ được cập nhật khi các dịch vụ thực tế được kết nối.
+          {summary
+            ? "Trạng thái được xác nhận từ các dịch vụ đang kết nối."
+            : "Trạng thái sẽ được cập nhật khi các dịch vụ thực tế được kết nối."}
         </Typography>
 
         <Stack spacing={2}>
-          <HealthRow label={t("dashboard.mapAuth")} state="Chưa kết nối" />
-          <HealthRow label={t("dashboard.storageBackend")} state="Chưa kết nối" />
-          <HealthRow label={t("dashboard.tileGateway")} state="Chưa kết nối" />
+          <HealthRow label={t("dashboard.mapAuth")} state={authState} />
+          <HealthRow label={t("dashboard.storageBackend")} state={storageState} />
+          <HealthRow label={t("dashboard.tileGateway")} state={tilesState} />
         </Stack>
 
         <Box sx={{ mt: 3, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
@@ -176,7 +224,14 @@ function MetricCard({
   );
 }
 
-function HealthRow({ label, state }: { label: string; state: string }) {
+function HealthRow({ label, state }: { label: string; state: ServiceState }) {
+  const colors: Record<ServiceState, { dot: string; text: string; ring: string }> = {
+    ready: { dot: "success.main", text: "success.main", ring: "rgba(34, 197, 94, 0.15)" },
+    degraded: { dot: "warning.main", text: "warning.main", ring: "rgba(217, 119, 6, 0.15)" },
+    unavailable: { dot: "text.disabled", text: "text.secondary", ring: "rgba(100, 116, 139, 0.15)" },
+  };
+  const color = colors[state];
+
   return (
     <Stack
       direction="row"
@@ -192,8 +247,8 @@ function HealthRow({ label, state }: { label: string; state: string }) {
             width: 8,
             height: 8,
             borderRadius: "50%",
-            bgcolor: "text.disabled",
-            boxShadow: "0 0 0 3px rgba(100, 116, 139, 0.15)",
+            bgcolor: color.dot,
+            boxShadow: `0 0 0 3px ${color.ring}`,
           }}
         />
         <Typography variant="body2" sx={{ fontSize: "0.9375rem", fontWeight: 600 }}>
@@ -204,12 +259,12 @@ function HealthRow({ label, state }: { label: string; state: string }) {
       <Typography
         variant="caption"
         sx={{
-          color: "text.secondary",
+          color: color.text,
           fontWeight: 700,
           fontSize: "0.8125rem",
         }}
       >
-        {state}
+        {serviceLabels[state]}
       </Typography>
     </Stack>
   );
