@@ -93,6 +93,14 @@ spec:
                   key: audience
             - name: AUTH_ADMIN_ROLE
               value: admin
+            # Optional during the first rollout. Access management becomes
+            # available after the read-only WebGIS directory Secret is added.
+            - name: WEBGIS_DIRECTORY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: geodata-webgis-directory
+                  key: database-url
+                  optional: true
           volumeMounts:
             - name: tile-cache
               mountPath: /var/cache/geodata/tiles

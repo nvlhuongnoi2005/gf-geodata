@@ -1,46 +1,64 @@
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: geodata-tile-gateway, namespace: tile-server, labels: { app.kubernetes.io/name: geodata-tile-gateway, app.kubernetes.io/part-of: geodata } }
+metadata:
+  {
+    name: geodata-tile-gateway,
+    namespace: tile-server,
+    labels: { app.kubernetes.io/name: geodata-tile-gateway, app.kubernetes.io/part-of: geodata },
+  }
 spec:
   replicas: 2
   selector: { matchLabels: { app.kubernetes.io/name: geodata-tile-gateway } }
   template:
-    metadata: { labels: { app.kubernetes.io/name: geodata-tile-gateway, app.kubernetes.io/part-of: geodata } }
+    metadata:
+      {
+        labels:
+          { app.kubernetes.io/name: geodata-tile-gateway, app.kubernetes.io/part-of: geodata },
+      }
     spec:
       automountServiceAccountToken: false
       imagePullSecrets: [{ name: ghcr-pull }]
       containers:
-      - name: gateway
-        image: ghcr.io/nvlhuongnoi2005/tile-server/geodata-tile-gateway:dev
-        imagePullPolicy: Always
-        ports: [{ name: http, containerPort: 8091 }]
-        env:
-        - { name: HTTP_ADDR, value: ":8091" }
-        - { name: S3_ENDPOINT, value: http://seaweedfs-s3.storage.svc.cluster.local:8333 }
-        - { name: S3_REGION, value: us-east-1 }
-        - { name: S3_PUBLISHED_BUCKET, value: geodata-published }
-        - { name: POSTGRES_HOST, value: geodata-catalog-postgresql }
-        - { name: POSTGRES_PORT, value: "5432" }
-        - { name: POSTGRES_SSLMODE, value: disable }
-        - name: POSTGRES_DATABASE
-          valueFrom: { secretKeyRef: { name: geodata-catalog-postgresql, key: database } }
-        - name: POSTGRES_USER
-          valueFrom: { secretKeyRef: { name: geodata-catalog-postgresql, key: username } }
-        - name: POSTGRES_PASSWORD
-          valueFrom: { secretKeyRef: { name: geodata-catalog-postgresql, key: password } }
-        - name: S3_ACCESS_KEY
-          valueFrom: { secretKeyRef: { name: geodata-gateway-s3, key: access-key } }
-        - name: S3_SECRET_KEY
-          valueFrom: { secretKeyRef: { name: geodata-gateway-s3, key: secret-key } }
-        - name: AUTH_JWKS_URL
-          valueFrom: { secretKeyRef: { name: geodata-upload-auth, key: jwks-url } }
-        - name: AUTH_ISSUER
-          valueFrom: { secretKeyRef: { name: geodata-upload-auth, key: issuer } }
-        - name: AUTH_AUDIENCE
-          valueFrom: { secretKeyRef: { name: geodata-upload-auth, key: audience } }
-        resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: "1", memory: 512Mi } }
+        - name: gateway
+          image: ghcr.io/nvlhuongnoi2005/tile-server/geodata-tile-gateway:dev
+          imagePullPolicy: Always
+          ports: [{ name: http, containerPort: 8091 }]
+          env:
+            - { name: HTTP_ADDR, value: ":8091" }
+            - { name: S3_ENDPOINT, value: http://seaweedfs-s3.storage.svc.cluster.local:8333 }
+            - { name: S3_REGION, value: us-east-1 }
+            - { name: S3_PUBLISHED_BUCKET, value: geodata-published }
+            - { name: POSTGRES_HOST, value: geodata-catalog-postgresql }
+            - { name: POSTGRES_PORT, value: "5432" }
+            - { name: POSTGRES_SSLMODE, value: disable }
+            - name: POSTGRES_DATABASE
+              valueFrom: { secretKeyRef: { name: geodata-catalog-postgresql, key: database } }
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: geodata-catalog-postgresql, key: username } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: geodata-catalog-postgresql, key: password } }
+            - name: S3_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: geodata-gateway-s3, key: access-key } }
+            - name: S3_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: geodata-gateway-s3, key: secret-key } }
+            - name: AUTH_JWKS_URL
+              valueFrom: { secretKeyRef: { name: geodata-upload-auth, key: jwks-url } }
+            - name: AUTH_ISSUER
+              valueFrom: { secretKeyRef: { name: geodata-upload-auth, key: issuer } }
+            - name: AUTH_AUDIENCE
+              valueFrom: { secretKeyRef: { name: geodata-upload-auth, key: audience } }
+            # Needed only for restricted releases. The credential has SELECT-only
+            # access to WebGIS users and is deliberately different from db-auth.
+            - name: WEBGIS_DIRECTORY_DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: geodata-webgis-directory, key: database-url, optional: true }
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: "1", memory: 512Mi } }
 ---
 apiVersion: v1
 kind: Service
 metadata: { name: geodata-tile-gateway, namespace: tile-server }
-spec: { selector: { app.kubernetes.io/name: geodata-tile-gateway }, ports: [{ name: http, port: 8091, targetPort: http }] }
+spec:
+  {
+    selector: { app.kubernetes.io/name: geodata-tile-gateway },
+    ports: [{ name: http, port: 8091, targetPort: http }],
+  }

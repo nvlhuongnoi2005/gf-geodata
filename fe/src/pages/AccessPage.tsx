@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Chip,
@@ -8,109 +9,198 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  Divider,
   FormControl,
-  InputAdornment,
   InputLabel,
   MenuItem,
   Paper,
   Select,
   Stack,
-  Tab,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
-  Tabs,
   TextField,
-  Tooltip,
   Typography,
 } from "@mui/material";
-import {
-  CheckCircle2,
-  Clock,
-  History,
-  KeyRound,
-  Lock,
-  Plus,
-  Search,
-  ShieldAlert,
-  ShieldCheck,
-  Trash2,
-  UserCheck,
-  Users,
-} from "lucide-react";
+import { Building2, KeyRound, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
+import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 
-export type AccessGrant = {
+type PrincipalType = "user" | "organization";
+type DirectorySubject = {
   id: string;
-  recipientType: "user" | "group";
-  recipientName: string;
-  department?: string;
-  grantedReleases: string[];
-  scope: "view_only" | "view_and_export";
-  grantedBy: string;
-  grantedAt: string;
+  type: PrincipalType;
+  name: string;
+  organization?: string;
+  detail?: string;
+};
+type Grant = {
+  id: string;
+  principalType: PrincipalType;
+  subjectName?: string;
+  organization?: string;
+  releaseId: string;
+  releaseName: string;
+  scope: "view" | "export";
+  note?: string;
   status: "active" | "revoked";
+  createdAt: string;
 };
+type Release = { id: string; name: string; status: string; visibility: string };
 
-export type AuditLogEntry = {
-  id: string;
-  timestamp: string;
-  actor: string;
-  action: "GRANT" | "REVOKE" | "ACCESS_DENIED";
-  recipient: string;
-  resource: string;
-  details: string;
-};
+const apiRoot = "/api/geodata/v1";
 
 export function AccessPage() {
-  const { t } = useI18n();
-  const [tabIndex, setTabIndex] = useState(0);
-  const [acls] = useState<AccessGrant[]>([]);
-  const [auditLogs] = useState<AuditLogEntry[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [openGrantModal, setOpenGrantModal] = useState(false);
+  const { accessToken } = useAuth();
+  const { language, t } = useI18n();
+  const [grants, setGrants] = useState<Grant[]>([]);
+  const [releases, setReleases] = useState<Release[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<"unavailable" | "error" | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [principalType, setPrincipalType] = useState<PrincipalType>("user");
+  const [subjectQuery, setSubjectQuery] = useState("");
+  const [subjects, setSubjects] = useState<DirectorySubject[]>([]);
+  const [selectedSubject, setSelectedSubject] = useState<DirectorySubject | null>(null);
+  const [releaseID, setReleaseID] = useState("");
+  const [scope, setScope] = useState<"view" | "export">("view");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(false);
+  const [revokeTarget, setRevokeTarget] = useState<Grant | null>(null);
 
-  // Form states
-  const [formType, setFormType] = useState<"user" | "group">("user");
-  const [formName, setFormName] = useState("");
-  const [formDepartment, setFormDepartment] = useState("");
-  const [formRelease, setFormRelease] = useState("");
-  const [formScope, setFormScope] = useState<"view_only" | "view_and_export">("view_only");
-  const [formNote, setFormNote] = useState("");
+  const headers = useMemo(
+    () => (accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined),
+    [accessToken]
+  );
 
-  const handleGrantAccess = () => {
-    setOpenGrantModal(false);
+  const load = async () => {
+    if (!headers) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [grantResponse, releaseResponse] = await Promise.all([
+        fetch(`${apiRoot}/access/grants`, { headers }),
+        fetch(`${apiRoot}/releases`, { headers }),
+      ]);
+      if (grantResponse.status === 503) {
+        setLoadError("unavailable");
+        return;
+      }
+      if (!grantResponse.ok || !releaseResponse.ok) throw new Error("load access grants");
+      const grantPayload = (await grantResponse.json()) as { items?: Grant[] };
+      const releasePayload = (await releaseResponse.json()) as { items?: Release[] };
+      setGrants(grantPayload.items ?? []);
+      setReleases(releasePayload.items ?? []);
+    } catch {
+      setLoadError("error");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleRevoke = (_id: string) => undefined;
+  useEffect(() => {
+    void load();
+  }, [accessToken]);
 
-  const filteredAcls = acls.filter((a) => {
-    const matchesTab =
-      tabIndex === 0
-        ? a.recipientType === "user"
-        : tabIndex === 1
-          ? a.recipientType === "group"
-          : true;
-    const matchesSearch =
-      a.recipientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (a.department && a.department.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesTab && matchesSearch;
-  });
+  useEffect(() => {
+    if (!dialogOpen || !headers) return;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const parameters = new URLSearchParams({
+            type: principalType,
+            q: subjectQuery,
+            limit: "25",
+          });
+          const response = await fetch(`${apiRoot}/access/subjects?${parameters}`, { headers });
+          if (!response.ok) throw new Error("search directory");
+          const payload = (await response.json()) as { items?: DirectorySubject[] };
+          setSubjects(payload.items ?? []);
+        } catch {
+          setSubjects([]);
+        }
+      })();
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [dialogOpen, headers, principalType, subjectQuery]);
 
-  const activeUsersCount = acls.filter(
-    (a) => a.recipientType === "user" && a.status === "active"
+  const activeUserCount = grants.filter(
+    (grant) => grant.status === "active" && grant.principalType === "user"
   ).length;
-  const activeGroupsCount = acls.filter(
-    (a) => a.recipientType === "group" && a.status === "active"
+  const activeOrganizationCount = grants.filter(
+    (grant) => grant.status === "active" && grant.principalType === "organization"
   ).length;
+  const dateFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(language === "vi" ? "vi-VN" : "en-US", {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }),
+    [language]
+  );
+
+  const openGrantDialog = () => {
+    setPrincipalType("user");
+    setSubjectQuery("");
+    setSelectedSubject(null);
+    setReleaseID("");
+    setScope("view");
+    setNote("");
+    setSaveError(false);
+    setDialogOpen(true);
+  };
+  const createGrant = async () => {
+    if (!headers || !selectedSubject || !releaseID) return;
+    setSaving(true);
+    setSaveError(false);
+    try {
+      const response = await fetch(`${apiRoot}/access/grants`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          principalType,
+          principalId: selectedSubject.id,
+          releaseId: releaseID,
+          scope,
+          note: note.trim(),
+        }),
+      });
+      if (!response.ok) throw new Error("create grant");
+      setDialogOpen(false);
+      await load();
+    } catch {
+      setSaveError(true);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const revoke = async () => {
+    if (!headers || !revokeTarget) return;
+    setSaving(true);
+    setSaveError(false);
+    try {
+      const response = await fetch(
+        `${apiRoot}/access/grants/${encodeURIComponent(revokeTarget.id)}/revoke`,
+        { method: "POST", headers }
+      );
+      if (!response.ok) throw new Error("revoke grant");
+      setRevokeTarget(null);
+      await load();
+    } catch {
+      setSaveError(true);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <Stack spacing={3}>
-      {/* Header */}
       <Stack
         direction={{ xs: "column", sm: "row" }}
         spacing={2}
@@ -123,27 +213,31 @@ export function AccessPage() {
           >
             {t("nav.access")}
           </Typography>
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ mt: 0.5, fontSize: "0.9375rem" }}
-          >
-            Quản lý chính sách xem bản đồ, phân quyền truy cập an toàn cho người dùng và các nhóm
-            đơn vị.
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            {t("access.description")}
           </Typography>
         </Box>
-        <Stack direction="row" spacing={1.2}>
-          <Button
-            variant="contained"
-            startIcon={<Plus size={16} />}
-            disabled
-          >
-            Cấp quyền truy cập mới
-          </Button>
-        </Stack>
+        <Button
+          variant="contained"
+          startIcon={<Plus size={16} />}
+          onClick={openGrantDialog}
+          disabled={!accessToken || loading || loadError !== null}
+        >
+          {t("access.grantNew")}
+        </Button>
       </Stack>
 
-      {/* KPI Cards */}
+      {loadError && (
+        <Alert severity={loadError === "unavailable" ? "warning" : "error"}>
+          {t(loadError === "unavailable" ? "access.unavailable" : "access.loadError")}
+        </Alert>
+      )}
+      {saveError && (
+        <Alert severity="error" onClose={() => setSaveError(false)}>
+          {t("access.saveError")}
+        </Alert>
+      )}
+
       <Box
         sx={{
           display: "grid",
@@ -151,402 +245,268 @@ export function AccessPage() {
           gap: 2,
         }}
       >
-        <Paper variant="outlined" sx={{ p: 2 }}>
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-            <Box
-              sx={{
-                p: 1.1,
-                borderRadius: 2,
-                bgcolor: "info.light",
-                color: "info.main",
-                display: "grid",
-              }}
-            >
-              <UserCheck size={20} />
-            </Box>
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Người dùng đã cấp quyền
-              </Typography>
-              <Typography variant="h5" sx={{ fontWeight: 800 }}>
-                {activeUsersCount} tài khoản
-              </Typography>
-            </Box>
-          </Stack>
-        </Paper>
-
-        <Paper variant="outlined" sx={{ p: 2 }}>
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-            <Box
-              sx={{
-                p: 1.1,
-                borderRadius: 2,
-                bgcolor: "secondary.light",
-                color: "secondary.dark",
-                display: "grid",
-              }}
-            >
-              <Users size={20} />
-            </Box>
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Nhóm & Đơn vị
-              </Typography>
-              <Typography variant="h5" sx={{ fontWeight: 800 }}>
-                {activeGroupsCount} nhóm
-              </Typography>
-            </Box>
-          </Stack>
-        </Paper>
-
-        <Paper variant="outlined" sx={{ p: 2 }}>
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-            <Box
-              sx={{
-                p: 1.1,
-                borderRadius: 2,
-                bgcolor: "success.light",
-                color: "success.main",
-                display: "grid",
-              }}
-            >
-              <ShieldCheck size={20} />
-            </Box>
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Cơ chế bảo vệ
-              </Typography>
-              <Typography sx={{ fontSize: "1.25rem", fontWeight: 700 }}>
-                Kiểm soát tập trung
-              </Typography>
-            </Box>
-          </Stack>
-        </Paper>
-
-        <Paper variant="outlined" sx={{ p: 2 }}>
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-            <Box
-              sx={{
-                p: 1.1,
-                borderRadius: 2,
-                bgcolor: "action.hover",
-                color: "text.secondary",
-                display: "grid",
-              }}
-            >
-              <History size={20} />
-            </Box>
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Nhật ký kiểm toán
-              </Typography>
-              <Typography sx={{ fontSize: "1.45rem", fontWeight: 700 }}>
-                {auditLogs.length} sự kiện
-              </Typography>
-            </Box>
-          </Stack>
-        </Paper>
+        <Metric icon={<UserRound size={20} />} label={t("access.user")} value={activeUserCount} />
+        <Metric
+          icon={<Building2 size={20} />}
+          label={t("access.organization")}
+          value={activeOrganizationCount}
+        />
+        <Metric
+          icon={<ShieldCheck size={20} />}
+          label={t("access.status")}
+          value={grants.filter((grant) => grant.status === "active").length}
+        />
       </Box>
 
-      {/* Tabs & Search */}
-      <Paper variant="outlined" sx={{ p: 1.5 }}>
-        <Stack
-          direction={{ xs: "column", md: "row" }}
-          spacing={2}
-          sx={{ justifyContent: "space-between", alignItems: { md: "center" } }}
-        >
-          <Tabs value={tabIndex} onChange={(_, val) => setTabIndex(val)}>
-            <Tab label={`Theo Người dùng (${activeUsersCount})`} />
-            <Tab label={`Theo Nhóm / Đơn vị (${activeGroupsCount})`} />
-            <Tab label="Nhật ký Kiểm toán (Audit Log)" />
-          </Tabs>
-
-          {tabIndex !== 2 && (
-            <TextField
-              size="small"
-              placeholder={t("access.search")}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              slotProps={{
-                input: {
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <Search size={16} />
-                    </InputAdornment>
-                  ),
-                },
-              }}
-              sx={{ width: { xs: "100%", md: 320 } }}
-            />
-          )}
-        </Stack>
-      </Paper>
-
-      {/* Content depending on Tab */}
-      {tabIndex === 0 || tabIndex === 1 ? (
-        <TableContainer component={Paper} variant="outlined">
-          <Table sx={{ minWidth: 800 }}>
-            <TableHead>
-              <TableRow>
-                <TableCell>{t("access.subject")}</TableCell>
-                <TableCell>{t("access.department")}</TableCell>
-                <TableCell>{t("access.releases")}</TableCell>
-                <TableCell>{t("access.scope")}</TableCell>
-                <TableCell>{t("access.grantedBy")}</TableCell>
-                <TableCell>{t("access.status")}</TableCell>
-                <TableCell align="right">{t("access.actions")}</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {filteredAcls.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={7} sx={{ textAlign: "center", py: 5 }}>
-                    <Typography color="text.secondary">{t("access.empty")}</Typography>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filteredAcls.map((acl) => (
-                  <TableRow key={acl.id} hover>
-                    <TableCell>
-                      <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                        {acl.recipientName}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="caption">{acl.department || "--"}</Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Stack direction="row" spacing={0.5} sx={{ flexWrap: "wrap", rowGap: 0.5 }}>
-                        {acl.grantedReleases.map((rel, idx) => (
-                          <Chip
-                            key={idx}
-                            label={rel}
-                            size="small"
-                            color="primary"
-                            variant="outlined"
-                            sx={{ fontSize: 11 }}
-                          />
-                        ))}
-                      </Stack>
-                    </TableCell>
-                    <TableCell>
-                      <Chip
-                        icon={<KeyRound size={13} />}
-                        label={
-                          acl.scope === "view_and_export" ? "Xem & Tải tile" : "Chỉ xem (View only)"
-                        }
-                        size="small"
-                        variant="outlined"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="caption" sx={{ display: "block", fontWeight: 600 }}>
-                        {acl.grantedBy}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {acl.grantedAt}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      {acl.status === "active" ? (
-                        <Chip
-                          label="Đang hiệu lực"
-                          size="small"
-                          color="success"
-                          sx={{ fontWeight: 700 }}
-                        />
-                      ) : (
-                        <Chip label="Đã thu hồi" size="small" color="error" variant="outlined" />
-                      )}
-                    </TableCell>
-                    <TableCell align="right">
-                      {acl.status === "active" ? (
-                        <Tooltip title="Thu hồi quyền ngay lập tức (FR-36)">
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            color="error"
-                            startIcon={<Trash2 size={14} />}
-                            onClick={() => handleRevoke(acl.id)}
-                          >
-                            Thu hồi
-                          </Button>
-                        </Tooltip>
-                      ) : (
-                        <Typography variant="caption" color="text.secondary">
-                          Không khả dụng
-                        </Typography>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      ) : (
-        /* Tab 2: Audit Logs */
-        <TableContainer component={Paper} variant="outlined">
-          <Table sx={{ minWidth: 800 }}>
-            <TableHead>
-              <TableRow>
-                <TableCell>{t("access.auditTime")}</TableCell>
-                <TableCell>{t("access.auditActor")}</TableCell>
-                <TableCell>{t("access.auditAction")}</TableCell>
-                <TableCell>{t("access.auditTarget")}</TableCell>
-                <TableCell>{t("access.auditResource")}</TableCell>
-                <TableCell>{t("access.auditDetails")}</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {auditLogs.map((log) => (
-                <TableRow key={log.id} hover>
+      <TableContainer component={Paper} variant="outlined">
+        <Table sx={{ minWidth: 760 }}>
+          <TableHead>
+            <TableRow>
+              <TableCell>{t("access.subject")}</TableCell>
+              <TableCell>{t("access.department")}</TableCell>
+              <TableCell>{t("access.releases")}</TableCell>
+              <TableCell>{t("access.scope")}</TableCell>
+              <TableCell>{t("access.status")}</TableCell>
+              <TableCell>{t("access.grantedBy")}</TableCell>
+              <TableCell align="right">{t("access.actions")}</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {loading ? (
+              <EmptyRow message={t("access.loading")} />
+            ) : grants.length === 0 ? (
+              <EmptyRow message={t("access.empty")} />
+            ) : (
+              grants.map((grant) => (
+                <TableRow key={grant.id} hover>
                   <TableCell>
-                    <Typography variant="caption" sx={{ fontFamily: "monospace", fontWeight: 600 }}>
-                      {log.timestamp}
+                    <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                      {grant.principalType === "user" ? (
+                        <UserRound size={16} />
+                      ) : (
+                        <Building2 size={16} />
+                      )}
+                      <Typography sx={{ fontWeight: 700 }}>{grant.subjectName || "—"}</Typography>
+                    </Stack>
+                  </TableCell>
+                  <TableCell>
+                    {grant.principalType === "organization"
+                      ? grant.subjectName
+                      : grant.organization || "—"}
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      label={grant.releaseName}
+                      size="small"
+                      color="primary"
+                      variant="outlined"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      icon={<KeyRound size={13} />}
+                      label={
+                        grant.scope === "export" ? t("access.viewExport") : t("access.viewOnly")
+                      }
+                      size="small"
+                      variant="outlined"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      label={grant.status === "active" ? t("access.active") : t("access.revoked")}
+                      color={grant.status === "active" ? "success" : "default"}
+                      size="small"
+                      variant={grant.status === "active" ? "filled" : "outlined"}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="caption">
+                      {dateFormatter.format(new Date(grant.createdAt))}
                     </Typography>
                   </TableCell>
-                  <TableCell>
-                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                      {log.actor}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    {log.action === "GRANT" && (
-                      <Chip
-                        label="CẤP QUYỀN"
-                        size="small"
-                        color="success"
-                        sx={{ fontWeight: 800, fontSize: 10 }}
-                      />
-                    )}
-                    {log.action === "REVOKE" && (
-                      <Chip
-                        label="THU HỒI"
+                  <TableCell align="right">
+                    {grant.status === "active" && (
+                      <Button
                         size="small"
                         color="error"
-                        sx={{ fontWeight: 800, fontSize: 10 }}
-                      />
+                        startIcon={<Trash2 size={14} />}
+                        onClick={() => setRevokeTarget(grant)}
+                      >
+                        {t("access.revoke")}
+                      </Button>
                     )}
-                    {log.action === "ACCESS_DENIED" && (
-                      <Chip
-                        label="TỪ CHỐI 403"
-                        size="small"
-                        color="warning"
-                        sx={{ fontWeight: 800, fontSize: 10 }}
-                      />
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="caption" sx={{ fontWeight: 600 }}>
-                      {log.recipient}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="caption" color="text.secondary">
-                      {log.resource}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="caption">{log.details}</Typography>
                   </TableCell>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      )}
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
 
-      {/* Grant Access Modal */}
       <Dialog
-        open={openGrantModal}
-        onClose={() => setOpenGrantModal(false)}
+        open={dialogOpen}
+        onClose={() => !saving && setDialogOpen(false)}
         maxWidth="sm"
         fullWidth
       >
         <DialogTitle sx={{ fontWeight: 800 }}>{t("access.grantTitle")}</DialogTitle>
         <DialogContent dividers>
-          <Stack spacing={2.5}>
-            <Alert severity="info" sx={{ fontSize: 13 }}>
-              Chỉ người dùng hoặc nhóm được cấp quyền mới có thể xem nội dung bản đồ.
-            </Alert>
-
+          <Stack spacing={2.5} sx={{ pt: 0.5 }}>
+            <Alert severity="info">{t("access.releaseHint")}</Alert>
             <FormControl fullWidth size="small">
               <InputLabel>{t("access.type")}</InputLabel>
               <Select
-                value={formType}
+                value={principalType}
                 label={t("access.type")}
-                onChange={(e) => setFormType(e.target.value as "user" | "group")}
+                onChange={(event) => {
+                  setPrincipalType(event.target.value as PrincipalType);
+                  setSelectedSubject(null);
+                  setSubjects([]);
+                }}
               >
                 <MenuItem value="user">{t("access.user")}</MenuItem>
-                <MenuItem value="group">{t("access.group")}</MenuItem>
+                <MenuItem value="organization">{t("access.organization")}</MenuItem>
               </Select>
             </FormControl>
-
-            <TextField
-              label={formType === "user" ? "Họ tên người dùng" : "Tên nhóm / Đơn vị"}
-              fullWidth
-              size="small"
-              value={formName}
-              onChange={(e) => setFormName(e.target.value)}
-              placeholder="Ví dụ: Hoàng Hải Nam (Kỹ sư dữ liệu)"
+            <Autocomplete
+              options={subjects}
+              value={selectedSubject}
+              onChange={(_, value) => setSelectedSubject(value)}
+              onInputChange={(_, value) => setSubjectQuery(value)}
+              getOptionLabel={(option) => option.name}
+              noOptionsText={t("access.noRecipients")}
+              renderOption={(props, option) => (
+                <li {...props} key={option.id}>
+                  <Stack>
+                    <Typography variant="body2">{option.name}</Typography>
+                    {option.detail && (
+                      <Typography variant="caption" color="text.secondary">
+                        {option.detail}
+                      </Typography>
+                    )}
+                  </Stack>
+                </li>
+              )}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label={t("access.recipient")}
+                  placeholder={t("access.searchRecipient")}
+                />
+              )}
             />
-
-            <TextField
-              label="Phòng ban / Đơn vị công tác"
-              fullWidth
-              size="small"
-              value={formDepartment}
-              onChange={(e) => setFormDepartment(e.target.value)}
-              placeholder="Ví dụ: Trung tâm Vận hành Khai thác Mạng"
-            />
-
             <FormControl fullWidth size="small">
               <InputLabel>{t("access.chooseRelease")}</InputLabel>
               <Select
-                value={formRelease}
+                value={releaseID}
                 label={t("access.chooseRelease")}
-                onChange={(e) => setFormRelease(e.target.value)}
+                onChange={(event) => setReleaseID(event.target.value)}
               >
                 <MenuItem value="" disabled>
-                  Chưa có Map Release để cấp quyền.
+                  {t("access.chooseRelease")}
                 </MenuItem>
+                {releases
+                  .filter((release) => release.status !== "archived")
+                  .map((release) => (
+                    <MenuItem value={release.id} key={release.id}>
+                      {release.name}
+                    </MenuItem>
+                  ))}
               </Select>
             </FormControl>
-
             <FormControl fullWidth size="small">
               <InputLabel>{t("access.scopeLabel")}</InputLabel>
               <Select
-                value={formScope}
+                value={scope}
                 label={t("access.scopeLabel")}
-                onChange={(e) => setFormScope(e.target.value as "view_only" | "view_and_export")}
+                onChange={(event) => setScope(event.target.value as "view" | "export")}
               >
-                <MenuItem value="view_only">{t("access.viewOnly")}</MenuItem>
-                <MenuItem value="view_and_export">{t("access.viewExport")}</MenuItem>
+                <MenuItem value="view">{t("access.viewOnly")}</MenuItem>
+                <MenuItem value="export">{t("access.viewExport")}</MenuItem>
               </Select>
             </FormControl>
-
             <TextField
-              label="Lý do cấp quyền (Ghi chú kiểm toán audit)"
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              label={t("access.note")}
               multiline
-              rows={2}
-              fullWidth
-              size="small"
-              value={formNote}
-              onChange={(e) => setFormNote(e.target.value)}
-              placeholder="Ghi chú số quyết định, dự án hoặc yêu cầu công việc..."
+              minRows={2}
+              slotProps={{ htmlInput: { maxLength: 2000 } }}
             />
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
-          <Button variant="outlined" onClick={() => setOpenGrantModal(false)}>
-            Hủy
+          <Button onClick={() => setDialogOpen(false)} disabled={saving}>
+            {t("access.cancel")}
           </Button>
-          <Button variant="contained" disabled={!formName} onClick={handleGrantAccess}>
-            Cấp quyền ngay
+          <Button
+            variant="contained"
+            onClick={() => void createGrant()}
+            disabled={!selectedSubject || !releaseID || saving}
+          >
+            {t("access.grant")}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(revokeTarget)}
+        onClose={() => !saving && setRevokeTarget(null)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>{t("access.revokeTitle")}</DialogTitle>
+        <DialogContent>
+          <Typography color="text.secondary">{t("access.revokeDescription")}</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRevokeTarget(null)} disabled={saving}>
+            {t("access.cancel")}
+          </Button>
+          <Button color="error" variant="contained" onClick={() => void revoke()} disabled={saving}>
+            {t("access.revoke")}
           </Button>
         </DialogActions>
       </Dialog>
     </Stack>
+  );
+}
+
+function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: number }) {
+  return (
+    <Paper variant="outlined" sx={{ p: 2 }}>
+      <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+        <Box
+          sx={{
+            p: 1.1,
+            borderRadius: 2,
+            bgcolor: "primary.light",
+            color: "primary.main",
+            display: "grid",
+          }}
+        >
+          {icon}
+        </Box>
+        <Box>
+          <Typography variant="caption" color="text.secondary">
+            {label}
+          </Typography>
+          <Typography variant="h5" sx={{ fontWeight: 800 }}>
+            {value}
+          </Typography>
+        </Box>
+      </Stack>
+    </Paper>
+  );
+}
+
+function EmptyRow({ message }: { message: string }) {
+  return (
+    <TableRow>
+      <TableCell colSpan={7} sx={{ py: 5, textAlign: "center" }}>
+        <Typography color="text.secondary">{message}</Typography>
+      </TableCell>
+    </TableRow>
   );
 }

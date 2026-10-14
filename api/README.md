@@ -24,6 +24,26 @@ The API keeps a local, ephemeral MBTiles cache for preview. It downloads from
 `geodata-derived` only after an authenticated request and never returns an S3
 bucket, endpoint, credential, or object key.
 
+## Map access grants
+
+GeoData treats WebGIS as the identity authority. It has no users or groups
+table of its own. When `WEBGIS_DIRECTORY_DATABASE_URL` is configured with the
+least-privilege directory role, these admin-only endpoints use the active
+WebGIS `users` directory:
+
+- `GET /api/geodata/v1/access/subjects?type=user|organization&q=...` searches
+  recipient choices. `organization` is the current WebGIS `users.organization`
+  value; WebGIS does not currently expose a separate groups table.
+- `GET /api/geodata/v1/access/grants` lists grants without exposing recipient
+  UUIDs to the browser.
+- `POST /api/geodata/v1/access/grants` creates one `view` or `export` grant
+  for a release.
+- `POST /api/geodata/v1/access/grants/{id}/revoke` immediately revokes it.
+
+The tile gateway validates the same WebGIS JWT. A restricted release requires
+an active grant matching the JWT `sub` or the account's current organisation.
+Public and authenticated releases retain their existing behavior.
+
 Required settings are documented in `deployment/README.md`. The service fails
 closed if the WebGIS JWKS URL, issuer, or audience are missing. Confirm the
 issuer/JWKS/audience values against the existing WebGIS token before deploying;

@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/catalog"
+	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/directory"
 	"io"
 	"log"
 	"net/http"
@@ -27,6 +28,7 @@ type gateway struct {
 	bucket           string
 	keys             keyfunc.Keyfunc
 	issuer, audience string
+	directory        *directory.Directory
 }
 
 func required(n string) string {
@@ -43,6 +45,15 @@ func main() {
 		log.Fatal(err)
 	}
 	defer store.Close()
+	var webgisDirectory *directory.Directory
+	if dsn := strings.TrimSpace(os.Getenv("WEBGIS_DIRECTORY_DATABASE_URL")); dsn != "" {
+		openedDirectory, directoryErr := directory.Open(ctx, dsn)
+		if directoryErr != nil {
+			log.Fatalf("connect WebGIS identity directory: %v", directoryErr)
+		}
+		webgisDirectory = openedDirectory
+		defer webgisDirectory.Close()
+	}
 	keys, err := keyfunc.NewDefault([]string{required("AUTH_JWKS_URL")})
 	if err != nil {
 		log.Fatal(err)
@@ -52,7 +63,7 @@ func main() {
 		log.Fatal(err)
 	}
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) { o.BaseEndpoint = aws.String(required("S3_ENDPOINT")); o.UsePathStyle = true })
-	g := &gateway{store: store, s3: client, bucket: required("S3_PUBLISHED_BUCKET"), keys: keys, issuer: required("AUTH_ISSUER"), audience: required("AUTH_AUDIENCE")}
+	g := &gateway{store: store, s3: client, bucket: required("S3_PUBLISHED_BUCKET"), keys: keys, issuer: required("AUTH_ISSUER"), audience: required("AUTH_AUDIENCE"), directory: webgisDirectory}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("GET /v1/releases/{slug}/tilejson/{artifactID}", g.tileJSON)
@@ -73,24 +84,44 @@ func (g *gateway) release(w http.ResponseWriter, r *http.Request) (catalog.MapRe
 		http.NotFound(w, r)
 		return catalog.MapRelease{}, nil, false
 	}
-	if release.Visibility != "public" && !g.validJWT(r) {
-		http.Error(w, "unauthorized", 401)
-		return catalog.MapRelease{}, nil, false
-	}
-	if release.Visibility == "restricted" {
-		http.Error(w, "restricted release ACL is not configured", 403)
-		return catalog.MapRelease{}, nil, false
+	if release.Visibility != "public" {
+		claims, ok := g.claims(r)
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return catalog.MapRelease{}, nil, false
+		}
+		if release.Visibility == "restricted" {
+			userID, _ := claims["sub"].(string)
+			if userID == "" || g.directory == nil {
+				http.Error(w, "restricted release directory is unavailable", http.StatusServiceUnavailable)
+				return catalog.MapRelease{}, nil, false
+			}
+			organization, directoryErr := g.directory.OrganizationForUser(r.Context(), userID)
+			if directoryErr != nil {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return catalog.MapRelease{}, nil, false
+			}
+			allowed, accessErr := g.store.CanViewRelease(r.Context(), release.ID, userID, organization)
+			if accessErr != nil {
+				http.Error(w, "access check unavailable", http.StatusServiceUnavailable)
+				return catalog.MapRelease{}, nil, false
+			}
+			if !allowed {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return catalog.MapRelease{}, nil, false
+			}
+		}
 	}
 	return release, arts, true
 }
-func (g *gateway) validJWT(r *http.Request) bool {
+func (g *gateway) claims(r *http.Request) (jwt.MapClaims, bool) {
 	h := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if h == r.Header.Get("Authorization") {
-		return false
+		return nil, false
 	}
 	claims := jwt.MapClaims{}
 	token, err := jwt.ParseWithClaims(h, claims, g.keys.Keyfunc, jwt.WithValidMethods([]string{jwt.SigningMethodEdDSA.Alg()}), jwt.WithIssuer(g.issuer), jwt.WithAudience(g.audience), jwt.WithExpirationRequired())
-	return err == nil && token != nil && token.Valid
+	return claims, err == nil && token != nil && token.Valid
 }
 func (g *gateway) tileJSON(w http.ResponseWriter, r *http.Request) {
 	_, arts, ok := g.release(w, r)

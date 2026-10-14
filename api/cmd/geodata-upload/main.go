@@ -25,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/catalog"
+	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/directory"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/mbtiles"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/tilegateway"
 )
@@ -49,6 +50,22 @@ type createReleaseRequest struct {
 }
 type releaseListResponse struct {
 	Items []catalog.MapRelease `json:"items"`
+}
+
+type directorySubjectListResponse struct {
+	Items []directory.Subject `json:"items"`
+}
+
+type accessGrantListResponse struct {
+	Items []catalog.AccessGrant `json:"items"`
+}
+
+type createAccessGrantRequest struct {
+	PrincipalType string `json:"principalType"`
+	PrincipalID   string `json:"principalId"`
+	ReleaseID     string `json:"releaseId"`
+	Scope         string `json:"scope"`
+	Note          string `json:"note"`
 }
 
 type tileJSONResponse struct {
@@ -126,6 +143,19 @@ func main() {
 	defer cancel()
 	store := openCatalog(ctx)
 	defer store.Close()
+	var webgisDirectory *directory.Directory
+	if dsn := strings.TrimSpace(os.Getenv("WEBGIS_DIRECTORY_DATABASE_URL")); dsn != "" {
+		openCtx, openCancel := context.WithTimeout(ctx, 10*time.Second)
+		openedDirectory, directoryErr := directory.Open(openCtx, dsn)
+		openCancel()
+		if directoryErr != nil {
+			log.Fatalf("connect WebGIS identity directory: %v", directoryErr)
+		}
+		webgisDirectory = openedDirectory
+		defer webgisDirectory.Close()
+	} else {
+		slog.Warn("WebGIS identity directory is not configured; access management is unavailable")
+	}
 
 	jwksURL := required("AUTH_JWKS_URL")
 	keys, err := keyfunc.NewDefaultCtx(ctx, []string{jwksURL})
@@ -171,6 +201,7 @@ func main() {
 		tileGatewayHealthURL: strings.TrimSpace(os.Getenv("TILE_GATEWAY_HEALTH_URL")),
 		healthClient:         &http.Client{Timeout: 3 * time.Second},
 		uploadSlots:          make(chan struct{}, 2),
+		directory:            webgisDirectory,
 	}
 
 	mux := http.NewServeMux()
@@ -191,6 +222,10 @@ func main() {
 	mux.Handle("POST /api/geodata/v1/releases/{releaseID}/publish", app.requireAdmin(http.HandlerFunc(app.publishRelease)))
 	mux.Handle("POST /api/geodata/v1/releases/{releaseID}/unpublish", app.requireAdmin(http.HandlerFunc(app.unpublishRelease)))
 	mux.Handle("DELETE /api/geodata/v1/releases/{releaseID}", app.requireAdmin(http.HandlerFunc(app.deleteRelease)))
+	mux.Handle("GET /api/geodata/v1/access/subjects", app.requireAdmin(http.HandlerFunc(app.listDirectorySubjects)))
+	mux.Handle("GET /api/geodata/v1/access/grants", app.requireAdmin(http.HandlerFunc(app.listAccessGrants)))
+	mux.Handle("POST /api/geodata/v1/access/grants", app.requireAdmin(http.HandlerFunc(app.createAccessGrant)))
+	mux.Handle("POST /api/geodata/v1/access/grants/{grantID}/revoke", app.requireAdmin(http.HandlerFunc(app.revokeAccessGrant)))
 	address := os.Getenv("HTTP_ADDR")
 	if address == "" {
 		address = ":8090"
@@ -242,6 +277,7 @@ type server struct {
 	authJWKSURL, tileGatewayHealthURL                  string
 	healthClient                                       *http.Client
 	uploadSlots                                        chan struct{}
+	directory                                          *directory.Directory
 }
 
 func (s *server) requireAdmin(next http.Handler) http.Handler {
@@ -490,6 +526,165 @@ func (s *server) deleteRelease(w http.ResponseWriter, r *http.Request) {
 	defer c()
 	if err := s.store.DeleteRelease(ctx, id); err != nil {
 		http.Error(w, "only an unpublished release can be deleted", 409)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) requireDirectory(w http.ResponseWriter) bool {
+	if s.directory != nil {
+		return true
+	}
+	http.Error(w, "WebGIS identity directory is not configured", http.StatusServiceUnavailable)
+	return false
+}
+
+func directoryType(raw string) (string, bool) {
+	switch raw {
+	case directory.SubjectUser:
+		return directory.SubjectUser, true
+	case directory.SubjectOrganization, "group":
+		return directory.SubjectOrganization, true
+	default:
+		return "", false
+	}
+}
+
+func (s *server) listDirectorySubjects(w http.ResponseWriter, r *http.Request) {
+	if !s.requireDirectory(w) {
+		return
+	}
+	kind, ok := directoryType(strings.TrimSpace(r.URL.Query().Get("type")))
+	if !ok {
+		http.Error(w, "type must be user or organization", http.StatusBadRequest)
+		return
+	}
+	limit := 25
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 100 {
+			http.Error(w, "limit must be between 1 and 100", http.StatusBadRequest)
+			return
+		}
+		limit = value
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	items, err := s.directory.Search(ctx, kind, r.URL.Query().Get("q"), limit)
+	if err != nil {
+		slog.Error("search WebGIS directory", "error", err)
+		http.Error(w, "could not search WebGIS users", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(directorySubjectListResponse{Items: items})
+}
+
+func (s *server) listAccessGrants(w http.ResponseWriter, r *http.Request) {
+	if !s.requireDirectory(w) {
+		return
+	}
+	kind := ""
+	if raw := strings.TrimSpace(r.URL.Query().Get("principalType")); raw != "" {
+		var ok bool
+		kind, ok = directoryType(raw)
+		if !ok {
+			http.Error(w, "principalType must be user or organization", http.StatusBadRequest)
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	items, err := s.store.ListAccessGrants(ctx, kind, 100)
+	if err != nil {
+		slog.Error("list access grants", "error", err)
+		http.Error(w, "could not load access grants", http.StatusServiceUnavailable)
+		return
+	}
+	for index := range items {
+		subject, subjectErr := s.directory.Subject(ctx, items[index].PrincipalType, items[index].PrincipalID)
+		if subjectErr == nil {
+			items[index].SubjectName = subject.Name
+			items[index].Organization = subject.Organization
+		} else if errors.Is(subjectErr, directory.ErrNotFound) {
+			items[index].SubjectName = "Unavailable account"
+		} else {
+			slog.Warn("resolve access grant directory subject", "grant_id", items[index].ID, "error", subjectErr)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(accessGrantListResponse{Items: items})
+}
+
+func (s *server) createAccessGrant(w http.ResponseWriter, r *http.Request) {
+	if !s.requireDirectory(w) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+	defer r.Body.Close()
+	var request createAccessGrantRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		http.Error(w, "invalid access grant request", http.StatusBadRequest)
+		return
+	}
+	kind, ok := directoryType(strings.TrimSpace(request.PrincipalType))
+	if !ok || !isUUID(strings.TrimSpace(request.ReleaseID)) || (request.Scope != "view" && request.Scope != "export") || len(request.Note) > 2000 {
+		http.Error(w, "invalid access grant request", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	subject, err := s.directory.Subject(ctx, kind, request.PrincipalID)
+	if errors.Is(err, directory.ErrNotFound) {
+		http.Error(w, "WebGIS user or organization is unavailable", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		slog.Error("verify WebGIS directory subject", "error", err)
+		http.Error(w, "could not verify WebGIS identity", http.StatusServiceUnavailable)
+		return
+	}
+	actor, _ := r.Context().Value(actorContextKey{}).(string)
+	grant, err := s.store.CreateAccessGrant(ctx, catalog.AccessGrant{
+		PrincipalType: kind, PrincipalID: subject.ID, ReleaseID: request.ReleaseID,
+		Scope: request.Scope, Note: strings.TrimSpace(request.Note), CreatedBy: actor,
+	})
+	if errors.Is(err, catalog.ErrAccessGrantNotFound) {
+		http.Error(w, "release does not exist or this access grant already exists", http.StatusConflict)
+		return
+	}
+	if err != nil {
+		slog.Error("create access grant", "error", err)
+		http.Error(w, "could not create access grant", http.StatusServiceUnavailable)
+		return
+	}
+	grant.SubjectName, grant.Organization = subject.Name, subject.Organization
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(grant)
+}
+
+func (s *server) revokeAccessGrant(w http.ResponseWriter, r *http.Request) {
+	if !s.requireDirectory(w) {
+		return
+	}
+	id := r.PathValue("grantID")
+	if !isUUID(id) {
+		http.Error(w, "invalid access grant identifier", http.StatusBadRequest)
+		return
+	}
+	actor, _ := r.Context().Value(actorContextKey{}).(string)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if err := s.store.RevokeAccessGrant(ctx, id, actor); err != nil {
+		if errors.Is(err, catalog.ErrAccessGrantNotFound) {
+			http.Error(w, "access grant not found or already revoked", http.StatusNotFound)
+			return
+		}
+		slog.Error("revoke access grant", "error", err)
+		http.Error(w, "could not revoke access grant", http.StatusServiceUnavailable)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

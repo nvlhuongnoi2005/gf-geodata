@@ -105,6 +105,48 @@ $audience = 'api-gateway'
 kubectl -n tile-server create secret generic geodata-upload-auth --from-literal="jwks-url=$jwksUrl" --from-literal="issuer=$issuer" --from-literal="audience=$audience" --dry-run=client -o yaml | kubectl apply -f -
 ```
 
+## Connect WebGIS users and organisations for map permissions
+
+GeoData does **not** copy WebGIS users. It reads only the active user directory
+from the existing `webgis.users` table and stores grants by WebGIS user UUID or
+by the existing `users.organization` value. The current WebGIS schema does not
+have a separate groups table; therefore “organisation” is the supported unit
+principal until WebGIS introduces stable organisation IDs.
+
+Create a database role with the minimum possible permission, then create the
+GeoData Secret. This runs against the WebGIS database and does not expose or
+reuse the `webgis_auth` password in GeoData:
+
+```powershell
+$directoryPassword = Read-Host 'Password for geodata_directory (store it in your secret manager)' -AsSecureString
+$directoryPasswordText = [System.Net.NetworkCredential]::new('', $directoryPassword).Password
+$directoryPasswordSql = $directoryPasswordText.Replace("'", "''")
+$directoryPasswordUrl = [uri]::EscapeDataString($directoryPasswordText)
+
+@"
+DO `$`$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'geodata_directory') THEN
+    CREATE ROLE geodata_directory LOGIN PASSWORD '$directoryPasswordSql' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+  END IF;
+END `$`$;
+GRANT CONNECT ON DATABASE webgis TO geodata_directory;
+GRANT USAGE ON SCHEMA public TO geodata_directory;
+GRANT SELECT (id, full_name, email, organization, status) ON TABLE public.users TO geodata_directory;
+"@ | kubectl -n webgis exec -i auth-postgres-0 -- psql -U webgis_auth -d webgis -v ON_ERROR_STOP=1
+
+$directoryUrl = "postgresql://geodata_directory:$directoryPasswordUrl@auth-postgres.webgis.svc.cluster.local:5432/webgis?sslmode=disable"
+kubectl -n tile-server create secret generic geodata-webgis-directory --from-literal="database-url=$directoryUrl" --dry-run=client -o yaml | kubectl apply -f -
+Remove-Variable directoryPasswordText,directoryPasswordSql,directoryPasswordUrl,directoryUrl -ErrorAction SilentlyContinue
+
+# This resource belongs to the WebGIS database boundary, so apply it with its deployment.
+kubectl apply -f deployment/integration/webgis-auth-postgres-networkpolicy.yaml
+```
+
+The upload API uses this connection only to search and validate recipients in
+the admin access screen. The tile gateway uses it only to resolve the current
+user's organisation for a restricted map. It cannot read password hashes,
+sessions, or modify WebGIS data.
+
 ## Configure the GeoData catalog database
 
 GeoData metadata is not stored in the WebGIS `db-auth` database. WebGIS remains
@@ -120,7 +162,7 @@ and is never printed by the script:
 & .\deployment\scripts\create-geodata-catalog-postgresql-secret.ps1
 ```
 
-For a production shared PostgreSQL cluster, reuse the PostgreSQL *server* if
+For a production shared PostgreSQL cluster, reuse the PostgreSQL _server_ if
 desired, but create a separate `geodata` database and a dedicated `geodata` role.
 Do not add GeoData tables to `db-auth` and do not synchronize tables between the
 two services.
@@ -186,4 +228,3 @@ runtime limit and up to 50 GiB node-local temporary space. For a country-scale
 PBF, give Docker Desktop at least 10 GiB RAM (or run the worker on a dedicated
 node); lowering the reservation only makes scheduling possible and does not
 reduce Tilemaker's actual peak-memory requirement.
-

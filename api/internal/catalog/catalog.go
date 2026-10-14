@@ -129,6 +129,27 @@ type MapRelease struct {
 	PublishedAt *time.Time `json:"publishedAt"`
 }
 
+// AccessGrant references an identity owned by WebGIS. The catalog never
+// persists user profile data; SubjectName and Organization are populated by
+// the API from the read-only WebGIS directory.
+type AccessGrant struct {
+	ID            string     `json:"id"`
+	PrincipalType string     `json:"principalType"`
+	PrincipalID   string     `json:"principalId"`
+	SubjectName   string     `json:"subjectName,omitempty"`
+	Organization  string     `json:"organization,omitempty"`
+	ReleaseID     string     `json:"releaseId"`
+	ReleaseName   string     `json:"releaseName"`
+	Scope         string     `json:"scope"`
+	Note          string     `json:"note,omitempty"`
+	Status        string     `json:"status"`
+	CreatedBy     string     `json:"-"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	RevokedAt     *time.Time `json:"revokedAt,omitempty"`
+}
+
+var ErrAccessGrantNotFound = errors.New("access grant not found")
+
 type ReleaseArtifact struct {
 	ReleaseID, ArtifactID, SourceName, OutputObjectKey string
 	TilePrefix, TileFormat                             string
@@ -460,6 +481,92 @@ func (s *Store) DeleteRelease(ctx context.Context, id string) error {
 		return ErrConversionJobNotActive
 	}
 	return nil
+}
+
+func (s *Store) CreateAccessGrant(ctx context.Context, grant AccessGrant) (AccessGrant, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return AccessGrant{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	err = tx.QueryRow(ctx, `
+INSERT INTO access_grants (principal_type,principal_id,release_id,scope,note,created_by)
+SELECT $1,$2,id,$3,$4,NULLIF($5,'') FROM map_releases WHERE id=$6
+ON CONFLICT DO NOTHING
+RETURNING id,principal_type,principal_id,release_id,scope,note,status,created_by,created_at,revoked_at`,
+		grant.PrincipalType, grant.PrincipalID, grant.Scope, grant.Note, grant.CreatedBy, grant.ReleaseID,
+	).Scan(&grant.ID, &grant.PrincipalType, &grant.PrincipalID, &grant.ReleaseID, &grant.Scope, &grant.Note, &grant.Status, &grant.CreatedBy, &grant.CreatedAt, &grant.RevokedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AccessGrant{}, ErrAccessGrantNotFound
+	}
+	if err != nil {
+		return AccessGrant{}, err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO access_audit_events(action,grant_id,actor_id) VALUES ('grant_created',$1,NULLIF($2,''))`, grant.ID, grant.CreatedBy); err != nil {
+		return AccessGrant{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return AccessGrant{}, err
+	}
+	return grant, nil
+}
+
+func (s *Store) ListAccessGrants(ctx context.Context, principalType string, limit int) ([]AccessGrant, error) {
+	if limit < 1 || limit > 100 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT g.id,g.principal_type,g.principal_id,g.release_id,r.name,g.scope,g.note,g.status,g.created_by,g.created_at,g.revoked_at
+FROM access_grants g JOIN map_releases r ON r.id=g.release_id
+WHERE ($1='' OR g.principal_type=$1)
+ORDER BY g.created_at DESC LIMIT $2`, principalType, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]AccessGrant, 0)
+	for rows.Next() {
+		var item AccessGrant
+		if err := rows.Scan(&item.ID, &item.PrincipalType, &item.PrincipalID, &item.ReleaseID, &item.ReleaseName, &item.Scope, &item.Note, &item.Status, &item.CreatedBy, &item.CreatedAt, &item.RevokedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) RevokeAccessGrant(ctx context.Context, id, actorID string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	result, err := tx.Exec(ctx, `UPDATE access_grants SET status='revoked',revoked_at=NOW(),revoked_by=NULLIF($2,'') WHERE id=$1 AND status='active'`, id, actorID)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return ErrAccessGrantNotFound
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO access_audit_events(action,grant_id,actor_id) VALUES ('grant_revoked',$1,NULLIF($2,''))`, id, actorID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// CanViewRelease is used by the tile gateway after a verified WebGIS JWT has
+// identified the caller. An export grant also includes view permission.
+func (s *Store) CanViewRelease(ctx context.Context, releaseID, userID, organization string) (bool, error) {
+	var allowed bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS(
+  SELECT 1 FROM access_grants
+  WHERE release_id=$1 AND status='active' AND (
+    (principal_type='user' AND principal_id=$2) OR
+    (principal_type='organization' AND $3<>'' AND lower(principal_id)=lower($3))
+  )
+)`, releaseID, userID, organization).Scan(&allowed)
+	return allowed, err
 }
 
 func (s *Store) ClaimReleasePublish(ctx context.Context) (*MapRelease, []ReleaseArtifact, error) {

@@ -1,0 +1,34 @@
+# Apply this resource with the WebGIS deployment. It grants only GeoData's
+# upload API and tile gateway TCP access to the WebGIS authentication database;
+# PostgreSQL privileges still restrict those clients to SELECT on public.users.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: auth-postgres-allow-geodata-directory
+  namespace: webgis
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: auth-postgres
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tile-server
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-upload
+      ports:
+        - protocol: TCP
+          port: 5432
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tile-server
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-tile-gateway
+      ports:
+        - protocol: TCP
+          port: 5432
