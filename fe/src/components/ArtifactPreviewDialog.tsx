@@ -54,7 +54,17 @@ export function ArtifactPreviewDialog({ artifactID, accessToken, onClose }: { ar
           transformRequest: (url) => url.startsWith("/api/geodata/") ? { url, headers: { Authorization: `Bearer ${accessToken}` } } : { url },
         });
         instance.addControl(new NavigationControl(), "top-right");
-        instance.once("load", () => { if (!disposed) setReady(true); });
+        // `load` waits until every source tile has settled. An initial artifact
+        // cache download or one unavailable tile can therefore leave the dialog
+        // covered by its spinner indefinitely. The style is ready as soon as
+        // MapLibre has created the map; tiles continue streaming afterwards.
+        instance.once("style.load", () => { if (!disposed) setReady(true); });
+        instance.once("error", () => {
+          if (!disposed) {
+            setReady(false);
+            setError(true);
+          }
+        });
         map.current = instance;
       } catch {
         if (!disposed) setError(true);
