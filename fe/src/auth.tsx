@@ -44,7 +44,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
     const restore = async () => {
       const headers = new Headers({ "Content-Type": "application/json" });
       const csrf = csrfToken();
-      if (csrf) headers.set("X-CSRF-Token", csrf);
+      // Without the companion CSRF cookie no browser session can be refreshed.
+      // Skipping the request avoids an expected 401 for a first-time visitor.
+      if (!csrf) {
+        setIsLoading(false);
+        return;
+      }
+      headers.set("X-CSRF-Token", csrf);
       try {
         const response = await fetch("/auth/refresh", {
           method: "POST",
