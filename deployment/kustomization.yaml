@@ -6,4 +6,5 @@ resources:
   - frontend
   - upload-api
   - worker
+  - tile-gateway
   - storage

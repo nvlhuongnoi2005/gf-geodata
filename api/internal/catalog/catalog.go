@@ -118,6 +118,18 @@ type ConversionArtifact struct {
 	OutputObjectKey string
 }
 
+type MapRelease struct {
+	ID, Name, Slug, Description, Visibility, Status string
+	CreatedAt, UpdatedAt                            time.Time
+	PublishedAt                                     *time.Time
+}
+
+type ReleaseArtifact struct {
+	ReleaseID, ArtifactID, SourceName, OutputObjectKey string
+	TilePrefix, TileFormat                             string
+	MinZoom, MaxZoom                                   int
+}
+
 type NewRawUpload struct {
 	RawUpload
 	ObjectKey string
@@ -366,6 +378,124 @@ WHERE j.id = $1 AND j.status = 'succeeded' AND j.output_object_key IS NOT NULL`,
 		return ConversionArtifact{}, ErrConversionJobNotFound
 	}
 	return artifact, err
+}
+
+func (s *Store) CreateRelease(ctx context.Context, release MapRelease, artifactIDs []string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = tx.Exec(ctx, `INSERT INTO map_releases (id,name,slug,description,visibility,created_by,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),$7,$7)`, release.ID, release.Name, release.Slug, release.Description, release.Visibility, "", release.CreatedAt); err != nil {
+		return err
+	}
+	for _, id := range artifactIDs {
+		result, err := tx.Exec(ctx, `INSERT INTO map_release_artifacts (release_id,artifact_id) SELECT $1,id FROM conversion_jobs WHERE id=$2 AND status='succeeded' AND output_object_key IS NOT NULL`, release.ID, id)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() != 1 {
+			return ErrConversionJobNotActive
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) ListReleases(ctx context.Context, limit int) ([]MapRelease, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id,name,slug,description,visibility,status,created_at,updated_at,published_at FROM map_releases ORDER BY updated_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []MapRelease{}
+	for rows.Next() {
+		var item MapRelease
+		if err := rows.Scan(&item.ID, &item.Name, &item.Slug, &item.Description, &item.Visibility, &item.Status, &item.CreatedAt, &item.UpdatedAt, &item.PublishedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) StartReleasePublish(ctx context.Context, id string) error {
+	result, err := s.pool.Exec(ctx, `UPDATE map_releases SET status='publishing',failure_message=NULL,updated_at=NOW() WHERE id=$1 AND status='draft'`, id)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return ErrConversionJobNotActive
+	}
+	return nil
+}
+
+func (s *Store) ClaimReleasePublish(ctx context.Context) (*MapRelease, []ReleaseArtifact, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var release MapRelease
+	err = tx.QueryRow(ctx, `SELECT id,name,slug,description,visibility,status,created_at,updated_at,published_at FROM map_releases WHERE status='publishing' ORDER BY updated_at FOR UPDATE SKIP LOCKED LIMIT 1`).Scan(&release.ID, &release.Name, &release.Slug, &release.Description, &release.Visibility, &release.Status, &release.CreatedAt, &release.UpdatedAt, &release.PublishedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, tx.Commit(ctx)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	rows, err := tx.Query(ctx, `SELECT a.release_id,a.artifact_id,r.display_name,j.output_object_key,COALESCE(a.tile_prefix,''),COALESCE(a.tile_format,''),COALESCE(a.min_zoom,j.min_zoom),COALESCE(a.max_zoom,j.max_zoom) FROM map_release_artifacts a JOIN conversion_jobs j ON j.id=a.artifact_id JOIN raw_uploads r ON r.id=j.raw_upload_id WHERE a.release_id=$1`, release.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	items := []ReleaseArtifact{}
+	for rows.Next() {
+		var item ReleaseArtifact
+		if err := rows.Scan(&item.ReleaseID, &item.ArtifactID, &item.SourceName, &item.OutputObjectKey, &item.TilePrefix, &item.TileFormat, &item.MinZoom, &item.MaxZoom); err != nil {
+			return nil, nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return &release, items, tx.Commit(ctx)
+}
+
+func (s *Store) CompleteReleasePublish(ctx context.Context, releaseID string, artifact ReleaseArtifact) error {
+	_, err := s.pool.Exec(ctx, `UPDATE map_release_artifacts SET tile_prefix=$3,tile_format=$4,min_zoom=$5,max_zoom=$6 WHERE release_id=$1 AND artifact_id=$2`, releaseID, artifact.ArtifactID, artifact.TilePrefix, artifact.TileFormat, artifact.MinZoom, artifact.MaxZoom)
+	return err
+}
+
+func (s *Store) FinishReleasePublish(ctx context.Context, id string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE map_releases SET status='published',published_at=NOW(),updated_at=NOW() WHERE id=$1 AND status='publishing'`, id)
+	return err
+}
+func (s *Store) FailReleasePublish(ctx context.Context, id, message string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE map_releases SET status='failed',failure_message=LEFT($2,4000),updated_at=NOW() WHERE id=$1`, id, message)
+	return err
+}
+
+func (s *Store) PublishedRelease(ctx context.Context, slug string) (MapRelease, []ReleaseArtifact, error) {
+	var release MapRelease
+	err := s.pool.QueryRow(ctx, `SELECT id,name,slug,description,visibility,status,created_at,updated_at,published_at FROM map_releases WHERE slug=$1 AND status='published'`, slug).Scan(&release.ID, &release.Name, &release.Slug, &release.Description, &release.Visibility, &release.Status, &release.CreatedAt, &release.UpdatedAt, &release.PublishedAt)
+	if err != nil {
+		return MapRelease{}, nil, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT a.release_id,a.artifact_id,r.display_name,'',a.tile_prefix,a.tile_format,a.min_zoom,a.max_zoom FROM map_release_artifacts a JOIN conversion_jobs j ON j.id=a.artifact_id JOIN raw_uploads r ON r.id=j.raw_upload_id WHERE a.release_id=$1`, release.ID)
+	if err != nil {
+		return MapRelease{}, nil, err
+	}
+	defer rows.Close()
+	items := []ReleaseArtifact{}
+	for rows.Next() {
+		var item ReleaseArtifact
+		if err := rows.Scan(&item.ReleaseID, &item.ArtifactID, &item.SourceName, &item.OutputObjectKey, &item.TilePrefix, &item.TileFormat, &item.MinZoom, &item.MaxZoom); err != nil {
+			return MapRelease{}, nil, err
+		}
+		items = append(items, item)
+	}
+	return release, items, rows.Err()
 }
 
 // ClaimConversionJob atomically reserves one queued job. SKIP LOCKED allows

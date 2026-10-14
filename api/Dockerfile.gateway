@@ -1,0 +1,14 @@
+ARG GO_IMAGE=golang:1.27-alpine
+ARG RUNTIME_IMAGE=alpine:3.22
+FROM ${GO_IMAGE} AS build
+WORKDIR /src
+COPY api/go.mod api/go.sum ./
+RUN go mod download
+COPY api/ ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/geodata-tile-gateway ./cmd/geodata-tile-gateway
+FROM ${RUNTIME_IMAGE}
+RUN addgroup -S geodata && adduser -S -G geodata geodata
+COPY --from=build /out/geodata-tile-gateway /usr/local/bin/geodata-tile-gateway
+USER geodata
+EXPOSE 8091
+ENTRYPOINT ["/usr/local/bin/geodata-tile-gateway"]

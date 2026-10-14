@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -22,20 +23,22 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/catalog"
+	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/tilestore"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/tiling"
 )
 
 var errConversionCanceled = errors.New("conversion canceled")
 
 type worker struct {
-	store         *catalog.Store
-	objectStore   *s3.Client
-	downloader    *manager.Downloader
-	uploader      *manager.Uploader
-	rawBucket     string
-	derivedBucket string
-	workspaceRoot string
-	converter     *tiling.Converter
+	store           *catalog.Store
+	objectStore     *s3.Client
+	downloader      *manager.Downloader
+	uploader        *manager.Uploader
+	rawBucket       string
+	derivedBucket   string
+	publishedBucket string
+	workspaceRoot   string
+	converter       *tiling.Converter
 }
 
 func required(name string) string {
@@ -52,7 +55,7 @@ func main() {
 
 	store := openCatalog(ctx)
 	defer store.Close()
-	app := &worker{store: store, rawBucket: required("S3_RAW_BUCKET"), derivedBucket: required("S3_DERIVED_BUCKET"), workspaceRoot: environmentOr("WORKSPACE_ROOT", "/work")}
+	app := &worker{store: store, rawBucket: required("S3_RAW_BUCKET"), derivedBucket: required("S3_DERIVED_BUCKET"), publishedBucket: required("S3_PUBLISHED_BUCKET"), workspaceRoot: environmentOr("WORKSPACE_ROOT", "/work")}
 	app.objectStore = openS3(ctx)
 	app.downloader = manager.NewDownloader(app.objectStore, func(d *manager.Downloader) { d.Concurrency = 2; d.PartSize = 64 * 1024 * 1024 })
 	app.uploader = manager.NewUploader(app.objectStore, func(u *manager.Uploader) { u.Concurrency = 2; u.PartSize = 64 * 1024 * 1024 })
@@ -68,7 +71,7 @@ func main() {
 	pollEvery := durationOr("JOB_POLL_INTERVAL", 5*time.Second)
 	slog.Info("geodata conversion worker started", "poll_interval", pollEvery.String())
 	for {
-		if !app.processOne(ctx) {
+		if !app.processOne(ctx) && !app.publishOne(ctx) {
 			select {
 			case <-ctx.Done():
 				slog.Info("geodata conversion worker stopped")
@@ -156,6 +159,71 @@ func (w *worker) processOne(parent context.Context) bool {
 	}
 	slog.Info("conversion job completed", "job_id", job.ID)
 	return true
+}
+
+func (w *worker) publishOne(parent context.Context) bool {
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	release, artifacts, err := w.store.ClaimReleasePublish(ctx)
+	cancel()
+	if err != nil {
+		slog.Error("claim release publish", "error", err)
+		return false
+	}
+	if release == nil {
+		return false
+	}
+	for _, artifact := range artifacts {
+		if err := w.publishArtifact(parent, release.ID, &artifact); err != nil {
+			slog.Error("publish release failed", "release_id", release.ID, "error", err)
+			failCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
+			_ = w.store.FailReleasePublish(failCtx, release.ID, err.Error())
+			stop()
+			return true
+		}
+	}
+	finishCtx, stop := context.WithTimeout(parent, 20*time.Second)
+	err = w.store.FinishReleasePublish(finishCtx, release.ID)
+	stop()
+	if err != nil {
+		slog.Error("finish release publish", "release_id", release.ID, "error", err)
+	}
+	return true
+}
+
+func (w *worker) publishArtifact(ctx context.Context, releaseID string, artifact *catalog.ReleaseArtifact) error {
+	workspace, err := os.MkdirTemp(w.workspaceRoot, "release-"+releaseID+"-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(workspace)
+	path := filepath.Join(workspace, "artifact.mbtiles")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, downloadErr := w.downloader.Download(ctx, file, &s3.GetObjectInput{Bucket: aws.String(w.derivedBucket), Key: aws.String(artifact.OutputObjectKey)})
+	closeErr := file.Close()
+	if downloadErr != nil {
+		return fmt.Errorf("download derived artifact: %w", downloadErr)
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	prefix := fmt.Sprintf("releases/%s/artifacts/%s", releaseID, artifact.ArtifactID)
+	format := "pbf"
+	extension := "pbf"
+	contentType := "application/vnd.mapbox-vector-tile"
+	if err := tilestore.Export(ctx, path, func(tile tilestore.Tile) error {
+		key := fmt.Sprintf("%s/tiles/%d/%d/%d.%s", prefix, tile.Z, tile.X, tile.Y, extension)
+		_, err := w.objectStore.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(w.publishedBucket), Key: aws.String(key), Body: bytes.NewReader(tile.Data), ContentType: aws.String(contentType), CacheControl: aws.String("public, max-age=31536000, immutable")})
+		return err
+	}); err != nil {
+		return fmt.Errorf("publish tile objects: %w", err)
+	}
+	artifact.TilePrefix, artifact.TileFormat = prefix, format
+	storeCtx, stop := context.WithTimeout(ctx, 20*time.Second)
+	defer stop()
+	return w.store.CompleteReleasePublish(storeCtx, releaseID, *artifact)
 }
 
 func (w *worker) runJob(ctx context.Context, job *catalog.ConversionJob) error {

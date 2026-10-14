@@ -22,6 +22,12 @@ spec:
           podSelector:
             matchLabels:
               app.kubernetes.io/name: geodata-worker
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tile-server
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-tile-gateway
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: geodata-bucket-bootstrap
