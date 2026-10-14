@@ -42,11 +42,13 @@ type conversionArtifactListResponse struct {
 	Items []catalog.ConversionArtifactView `json:"items"`
 }
 type createReleaseRequest struct {
-	Name        string   `json:"name"`
-	Slug        string   `json:"slug"`
-	Description string   `json:"description"`
-	Visibility  string   `json:"visibility"`
-	ArtifactIDs []string `json:"artifactIds"`
+	Name         string   `json:"name"`
+	MapCode      string   `json:"mapCode"`
+	Version      string   `json:"version"`
+	Description  string   `json:"description"`
+	ReleaseNotes string   `json:"releaseNotes"`
+	Visibility   string   `json:"visibility"`
+	ArtifactIDs  []string `json:"artifactIds"`
 }
 type releaseListResponse struct {
 	Items []catalog.MapRelease `json:"items"`
@@ -462,7 +464,7 @@ func (s *server) createRelease(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
-	if d.Decode(&request) != nil || strings.TrimSpace(request.Name) == "" || !validSlug(request.Slug) || len(request.ArtifactIDs) == 0 || len(request.ArtifactIDs) > 20 || (request.Visibility != "public" && request.Visibility != "authenticated" && request.Visibility != "restricted") {
+	if d.Decode(&request) != nil || strings.TrimSpace(request.Name) == "" || !validVersion(request.Version) || len(request.Description) > 2000 || len(request.ReleaseNotes) > 4000 || len(request.ArtifactIDs) == 0 || len(request.ArtifactIDs) > 20 || (request.Visibility != "public" && request.Visibility != "authenticated" && request.Visibility != "restricted") {
 		http.Error(w, "invalid release request", 400)
 		return
 	}
@@ -472,14 +474,43 @@ func (s *server) createRelease(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	mapCode := strings.TrimSpace(request.MapCode)
+	ctx, c := context.WithTimeout(r.Context(), 10*time.Second)
+	defer c()
+	if mapCode == "" {
+		var err error
+		mapCode, err = newMapCode()
+		if err != nil {
+			http.Error(w, "could not generate map code", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		if !validMapCode(mapCode) {
+			http.Error(w, "invalid map code", http.StatusBadRequest)
+			return
+		}
+		exists, err := s.store.MapCodeExists(ctx, mapCode)
+		if err != nil {
+			http.Error(w, "could not verify map version", http.StatusServiceUnavailable)
+			return
+		}
+		if !exists {
+			http.Error(w, "map code must refer to an existing map", http.StatusBadRequest)
+			return
+		}
+	}
+	slug := releaseSlug(mapCode, request.Version)
+	if !validSlug(slug) {
+		http.Error(w, "generated release identifier is invalid", http.StatusBadRequest)
+		return
+	}
 	id, err := newUUID()
 	if err != nil {
 		http.Error(w, "could not create release", 500)
 		return
 	}
-	release := catalog.MapRelease{ID: id, Name: strings.TrimSpace(request.Name), Slug: request.Slug, Description: strings.TrimSpace(request.Description), Visibility: request.Visibility, Status: "draft", CreatedAt: time.Now().UTC()}
-	ctx, c := context.WithTimeout(r.Context(), 10*time.Second)
-	defer c()
+	actor, _ := r.Context().Value(actorContextKey{}).(string)
+	release := catalog.MapRelease{ID: id, Name: strings.TrimSpace(request.Name), MapCode: mapCode, Version: request.Version, Slug: slug, Description: strings.TrimSpace(request.Description), ReleaseNotes: strings.TrimSpace(request.ReleaseNotes), Visibility: request.Visibility, Status: "draft", CreatedBy: actor, CreatedAt: time.Now().UTC()}
 	if err = s.store.CreateRelease(ctx, release, request.ArtifactIDs); err != nil {
 		http.Error(w, "could not create release", 409)
 		return
@@ -699,6 +730,41 @@ func validSlug(value string) bool {
 		}
 	}
 	return !strings.HasPrefix(value, "-") && !strings.HasSuffix(value, "-")
+}
+
+func validMapCode(value string) bool {
+	// Legacy releases use their former slug as mapCode. Keep those maps
+	// versionable even when an old identifier is shorter than new generated
+	// codes such as map-a1b2c3d4e5f6.
+	return validSlug(value) && len(value) <= 100
+}
+
+func validVersion(value string) bool {
+	parts := strings.Split(value, ".")
+	if len(parts) != 3 || len(value) > 32 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" || (len(part) > 1 && part[0] == '0') {
+			return false
+		}
+		if _, err := strconv.Atoi(part); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func newMapCode() (string, error) {
+	id, err := newUUID()
+	if err != nil {
+		return "", err
+	}
+	return "map-" + strings.ReplaceAll(id, "-", "")[:12], nil
+}
+
+func releaseSlug(mapCode, version string) string {
+	return mapCode + "-v" + strings.ReplaceAll(version, ".", "-")
 }
 
 func (s *server) loadPreviewArtifact(w http.ResponseWriter, r *http.Request) (catalog.ConversionArtifact, string, mbtiles.Metadata, bool) {
