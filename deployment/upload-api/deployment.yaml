@@ -38,6 +38,27 @@ spec:
               value: us-east-1
             - name: MAX_UPLOAD_BYTES
               value: "53687091200"
+            - name: POSTGRES_HOST
+              value: geodata-catalog-postgresql
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_SSLMODE
+              value: disable
+            - name: POSTGRES_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: geodata-catalog-postgresql
+                  key: database
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: geodata-catalog-postgresql
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: geodata-catalog-postgresql
+                  key: password
             - name: S3_ACCESS_KEY
               valueFrom:
                 secretKeyRef:

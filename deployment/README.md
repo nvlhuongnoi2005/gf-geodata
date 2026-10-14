@@ -59,11 +59,13 @@ if ($bootstrapSecret.data.'access-key'.Length -eq 0 -or $bootstrapSecret.data.'s
 }
 ```
 
-If either S3 credential Secret was accidentally created with blank values,
-rerun the complete block above. It safely rotates both identities together;
-then restart SeaweedFS and recreate the bootstrap Job:
+If either S3 credential Secret was accidentally created with blank values, use
+the checked script below. It safely rotates both identities together and stops
+if the bootstrap Secret is empty; it never prints credential values. Then
+restart SeaweedFS and recreate the bootstrap Job:
 
 ```powershell
+& .\deployment\scripts\rotate-geodata-s3-credentials.ps1
 kubectl -n storage rollout restart statefulset/seaweedfs
 kubectl -n storage rollout status statefulset/seaweedfs --timeout=10m
 kubectl -n storage delete job geodata-bucket-bootstrap --ignore-not-found
@@ -95,6 +97,26 @@ $audience = 'api-gateway'
 kubectl -n tile-server create secret generic geodata-upload-auth --from-literal="jwks-url=$jwksUrl" --from-literal="issuer=$issuer" --from-literal="audience=$audience" --dry-run=client -o yaml | kubectl apply -f -
 ```
 
+## Configure the GeoData catalog database
+
+GeoData metadata is not stored in the WebGIS `db-auth` database. WebGIS remains
+the identity authority; GeoData stores only the authenticated subject internally
+for audit. This keeps authentication migrations, credentials, backup and access
+control independent from the source-data catalog.
+
+The manifests provision a dedicated `geodata` database in `tile-server`. Create
+its Kubernetes Secret once before deployment; the password is generated locally
+and is never printed by the script:
+
+```powershell
+& .\deployment\scripts\create-geodata-catalog-postgresql-secret.ps1
+```
+
+For a production shared PostgreSQL cluster, reuse the PostgreSQL *server* if
+desired, but create a separate `geodata` database and a dedicated `geodata` role.
+Do not add GeoData tables to `db-auth` and do not synchronize tables between the
+two services.
+
 ## Deploy
 
 The storage manifests create a single-node SeaweedFS installation with a 100Gi
@@ -109,6 +131,8 @@ Ensure the cluster CNI enforces Kubernetes NetworkPolicy before applying.
 kubectl apply -k deployment
 kubectl -n storage rollout status statefulset/seaweedfs --timeout=10m
 kubectl -n storage wait --for=condition=complete job/geodata-bucket-bootstrap --timeout=5m
+kubectl -n tile-server rollout restart deployment/geodata-upload
+kubectl -n tile-server rollout restart deployment/geodata-frontend
 kubectl -n tile-server rollout status deployment/geodata-upload --timeout=5m
 kubectl -n tile-server rollout status deployment/geodata-frontend --timeout=5m
 ```
@@ -119,10 +143,15 @@ publishes `geodata-upload:dev` when `api/**` changes. The upload API enforces a
 supports `.osm.pbf`, GeoTIFF, GeoPackage, Shapefile ZIP, and MBTiles. Raw object
 keys are generated server-side and never returned to the browser.
 
-This is a single replica and one PVC: it is a development/single-node starting
-point, not HA or a backup strategy. Configure storage-class capacity, snapshots,
-and tested restore before putting irreplaceable data there. The upload service
-does not yet register uploaded objects in a database; dataset catalog and
-processing records are a separate next step. The local ingress is available at
-`http://geodata.localhost`.
+This is a single replica and one PVC for both SeaweedFS and PostgreSQL: it is a
+development/single-node starting point, not HA or a backup strategy. Configure
+storage-class capacity, snapshots, and tested restore before putting irreplaceable
+data there. The upload API applies its idempotent catalog migration at startup;
+every successful upload is stored in SeaweedFS and registered in PostgreSQL. The
+local ingress is available at `http://geodata.localhost`.
+
+Files uploaded before this catalog was introduced have no user-selected name or
+data type, so they are intentionally not inferred from S3 and do not appear in
+the catalog. Upload those files again, or add them through a future controlled
+import workflow that explicitly supplies their metadata.
 

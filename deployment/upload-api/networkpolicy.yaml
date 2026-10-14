@@ -18,6 +18,13 @@ spec:
           port: 8090
   egress:
     - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-catalog-postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: storage

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,16 +24,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/catalog"
 )
 
-type uploadResponse struct {
-	ID        string    `json:"id"`
-	FileName  string    `json:"fileName"`
-	ByteSize  int64     `json:"byteSize"`
-	SHA256    string    `json:"sha256"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
+type uploadListResponse struct {
+	Items []catalog.RawUpload `json:"items"`
 }
+
+type actorContextKey struct{}
 
 func required(name string) string {
 	v := strings.TrimSpace(os.Getenv(name))
@@ -51,6 +50,9 @@ func main() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	store := openCatalog(ctx)
+	defer store.Close()
+
 	keys, err := keyfunc.NewDefaultCtx(ctx, []string{required("AUTH_JWKS_URL")})
 	if err != nil {
 		log.Fatalf("load auth JWKS: %v", err)
@@ -75,19 +77,23 @@ func main() {
 	if err != nil {
 		log.Fatalf("configure S3 client: %v", err)
 	}
-	client := s3.NewFromConfig(base, func(o *s3.Options) {
+	objectStore := s3.NewFromConfig(base, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true
 	})
-	uploader := manager.NewUploader(client, func(u *manager.Uploader) {
+	uploader := manager.NewUploader(objectStore, func(u *manager.Uploader) {
 		u.PartSize = 64 * 1024 * 1024
 		u.Concurrency = 2
 	})
-	app := &server{keys: keys, issuer: issuer, audience: audience, adminRole: roleName,
-		bucket: required("S3_BUCKET"), maxUploadBytes: maxBytes, uploader: uploader, uploadSlots: make(chan struct{}, 2)}
+	app := &server{
+		keys: keys, issuer: issuer, audience: audience, adminRole: roleName,
+		bucket: required("S3_BUCKET"), maxUploadBytes: maxBytes, uploader: uploader,
+		objectStore: objectStore, store: store, uploadSlots: make(chan struct{}, 2),
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.Handle("GET /api/geodata/v1/uploads", app.requireAdmin(http.HandlerFunc(app.listUploads)))
 	mux.Handle("PUT /api/geodata/v1/uploads", app.requireAdmin(http.HandlerFunc(app.upload)))
 	address := os.Getenv("HTTP_ADDR")
 	if address == "" {
@@ -101,11 +107,41 @@ func main() {
 	}
 }
 
+func openCatalog(ctx context.Context) *catalog.Store {
+	cfg := catalog.Config{
+		Host: required("POSTGRES_HOST"), Port: os.Getenv("POSTGRES_PORT"),
+		Database: required("POSTGRES_DATABASE"), User: required("POSTGRES_USER"),
+		Password: required("POSTGRES_PASSWORD"), SSLMode: os.Getenv("POSTGRES_SSLMODE"),
+	}
+	deadline := time.Now().Add(75 * time.Second)
+	for {
+		attemptCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		store, err := catalog.Open(attemptCtx, cfg)
+		if err == nil {
+			err = store.Migrate(attemptCtx)
+		}
+		cancel()
+		if err == nil {
+			return store
+		}
+		if store != nil {
+			store.Close()
+		}
+		if time.Now().After(deadline) {
+			log.Fatalf("connect or migrate geodata catalog: %v", err)
+		}
+		slog.Warn("geodata catalog is not ready; retrying", "error", err)
+		time.Sleep(3 * time.Second)
+	}
+}
+
 type server struct {
 	keys                                keyfunc.Keyfunc
 	issuer, audience, adminRole, bucket string
 	maxUploadBytes                      int64
 	uploader                            *manager.Uploader
+	objectStore                         *s3.Client
+	store                               *catalog.Store
 	uploadSlots                         chan struct{}
 }
 
@@ -127,7 +163,8 @@ func (s *server) requireAdmin(next http.Handler) http.Handler {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		next.ServeHTTP(w, r)
+		subject, _ := claims["sub"].(string)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorContextKey{}, subject)))
 	})
 }
 
@@ -152,20 +189,47 @@ func isAdmin(claims jwt.MapClaims, role string) bool {
 	return false
 }
 
+func (s *server) listUploads(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			http.Error(w, "limit must be between 1 and 100", http.StatusBadRequest)
+			return
+		}
+		limit = parsed
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	items, err := s.store.List(ctx, limit)
+	if err != nil {
+		slog.Error("list raw upload metadata failed", "error", err)
+		http.Error(w, "could not load source data", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(uploadListResponse{Items: items})
+}
+
 func (s *server) upload(w http.ResponseWriter, r *http.Request) {
-	name := r.URL.Query().Get("filename")
-	if name == "" || len(name) > 255 || filepath.Base(name) != name || strings.ContainsAny(name, "/\\\x00") {
+	fileName := r.URL.Query().Get("filename")
+	if fileName == "" || len(fileName) > 255 || filepath.Base(fileName) != fileName || strings.ContainsAny(fileName, "/\\\x00") {
 		http.Error(w, "invalid file name", http.StatusBadRequest)
 		return
 	}
-	ext := strings.ToLower(filepath.Ext(name))
-	if ext == ".pbf" && !strings.HasSuffix(strings.ToLower(name), ".osm.pbf") {
+	format, supported := catalog.SourceFormat(fileName)
+	if !supported {
 		http.Error(w, "unsupported file format", http.StatusUnsupportedMediaType)
 		return
 	}
-	valid := map[string]bool{".pbf": true, ".tif": true, ".tiff": true, ".gpkg": true, ".zip": true, ".mbtiles": true}
-	if !valid[ext] || (ext == ".pbf" && !strings.HasSuffix(strings.ToLower(name), ".osm.pbf")) {
-		http.Error(w, "unsupported file format", http.StatusUnsupportedMediaType)
+	dataName := strings.TrimSpace(r.URL.Query().Get("name"))
+	if dataName == "" || len([]rune(dataName)) > 200 {
+		http.Error(w, "data name must be between 1 and 200 characters", http.StatusBadRequest)
+		return
+	}
+	dataType := strings.TrimSpace(r.URL.Query().Get("dataType"))
+	if !catalog.IsDataType(dataType) {
+		http.Error(w, "invalid data type", http.StatusBadRequest)
 		return
 	}
 	if r.ContentLength < 1 || r.ContentLength > s.maxUploadBytes {
@@ -185,25 +249,45 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not start upload", http.StatusInternalServerError)
 		return
 	}
-	var idParts = []string{hex.EncodeToString(idBytes[:4]), hex.EncodeToString(idBytes[4:6]), hex.EncodeToString(idBytes[6:8]), hex.EncodeToString(idBytes[8:10]), hex.EncodeToString(idBytes[10:])}
-	id := strings.Join(idParts, "-")
-	key := fmt.Sprintf("incoming/%s/%s/%s", time.Now().UTC().Format("2006/01"), id, name)
+	id := fmt.Sprintf("%s-%s-%s-%s-%s", hex.EncodeToString(idBytes[:4]), hex.EncodeToString(idBytes[4:6]), hex.EncodeToString(idBytes[6:8]), hex.EncodeToString(idBytes[8:10]), hex.EncodeToString(idBytes[10:]))
+	createdAt := time.Now().UTC()
+	key := fmt.Sprintf("incoming/%s/%s/%s", createdAt.Format("2006/01"), id, fileName)
 	hasher := sha256.New()
 	body := io.TeeReader(r.Body, hasher)
 	_, err := s.uploader.Upload(r.Context(), &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket), Key: aws.String(key), Body: body,
 		ContentLength: aws.Int64(r.ContentLength), ContentType: aws.String("application/octet-stream"),
-		Metadata: map[string]string{"upload-id": id, "source-file-name": name, "uploaded-at": time.Now().UTC().Format(time.RFC3339Nano)},
+		Metadata: map[string]string{"upload-id": id, "source-file-name": fileName, "uploaded-at": createdAt.Format(time.RFC3339Nano)},
 	})
 	if err != nil {
 		slog.Error("raw upload failed", "upload_id", id, "error", err)
 		http.Error(w, "upload failed", http.StatusBadGateway)
 		return
 	}
+	record := catalog.NewRawUpload{RawUpload: catalog.RawUpload{
+		ID: id, Name: dataName, DataType: dataType, FileName: fileName, Format: format,
+		ByteSize: r.ContentLength, SHA256: hex.EncodeToString(hasher.Sum(nil)), Status: "uploaded", CreatedAt: createdAt,
+	}, ObjectKey: key}
+	if subject, ok := r.Context().Value(actorContextKey{}).(string); ok {
+		record.CreatedBy = subject
+	}
+	metadataCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	err = s.store.Create(metadataCtx, record)
+	cancel()
+	if err != nil {
+		slog.Error("catalog write failed after raw upload", "upload_id", id, "error", err)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, cleanupErr := s.objectStore.DeleteObject(cleanupCtx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
+		cleanupCancel()
+		if cleanupErr != nil {
+			slog.Error("could not clean up untracked raw object", "upload_id", id, "error", cleanupErr)
+		}
+		http.Error(w, "could not register source data", http.StatusServiceUnavailable)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(uploadResponse{ID: id, FileName: name, ByteSize: r.ContentLength,
-		SHA256: hex.EncodeToString(hasher.Sum(nil)), Status: "uploaded", CreatedAt: time.Now().UTC()})
+	_ = json.NewEncoder(w).Encode(record.RawUpload)
 }
 
 func securityHeaders(next http.Handler) http.Handler {
