@@ -31,7 +31,12 @@ type Store struct {
 	pool *pgxpool.Pool
 }
 
-var ErrRawUploadNotFound = errors.New("raw upload not found")
+var (
+	ErrRawUploadNotFound         = errors.New("raw upload not found")
+	ErrConversionJobNotFound     = errors.New("conversion job not found")
+	ErrConversionJobNotActive    = errors.New("conversion job is not active")
+	ErrConversionJobNotRemovable = errors.New("conversion job is not removable")
+)
 
 // RawUpload is the safe catalog view returned to the browser. Storage paths and
 // account details deliberately remain private to this package.
@@ -244,19 +249,41 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 }
 
 func (s *Store) CreateConversionJob(ctx context.Context, id, rawUploadID string, minZoom, maxZoom int, layerName string) (ConversionJob, error) {
-	var job ConversionJob
-	err := s.pool.QueryRow(ctx, `
-INSERT INTO conversion_jobs (id, raw_upload_id, min_zoom, max_zoom, layer_name)
-SELECT $1, id, $3, $4, NULLIF($5, '')
-FROM raw_uploads
-WHERE id = $2 AND status IN ('uploaded', 'failed', 'converted')
-RETURNING id, raw_upload_id, status, min_zoom, max_zoom, COALESCE(layer_name, ''), progress, current_step, created_at`,
-		id, rawUploadID, minZoom, maxZoom, layerName,
-	).Scan(&job.ID, &job.RawUploadID, &job.Status, &job.MinZoom, &job.MaxZoom, &job.LayerName, &job.Progress, &job.CurrentStep, &job.CreatedAt)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ConversionJob{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var status string
+	err = tx.QueryRow(ctx, `SELECT status FROM raw_uploads WHERE id = $1 FOR UPDATE`, rawUploadID).Scan(&status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ConversionJob{}, ErrRawUploadNotFound
 	}
-	return job, err
+	if err != nil {
+		return ConversionJob{}, err
+	}
+	if status != "uploaded" && status != "failed" && status != "converted" {
+		return ConversionJob{}, ErrConversionJobNotActive
+	}
+
+	var job ConversionJob
+	err = tx.QueryRow(ctx, `
+INSERT INTO conversion_jobs (id, raw_upload_id, min_zoom, max_zoom, layer_name)
+VALUES ($1, $2, $3, $4, NULLIF($5, ''))
+RETURNING id, raw_upload_id, status, min_zoom, max_zoom, COALESCE(layer_name, ''), progress, current_step, created_at`,
+		id, rawUploadID, minZoom, maxZoom, layerName,
+	).Scan(&job.ID, &job.RawUploadID, &job.Status, &job.MinZoom, &job.MaxZoom, &job.LayerName, &job.Progress, &job.CurrentStep, &job.CreatedAt)
+	if err != nil {
+		return ConversionJob{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE raw_uploads SET status = 'converting' WHERE id = $1`, rawUploadID); err != nil {
+		return ConversionJob{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ConversionJob{}, err
+	}
+	return job, nil
 }
 
 func (s *Store) ListConversionJobs(ctx context.Context, limit int) ([]ConversionJobView, error) {
@@ -378,6 +405,78 @@ RETURNING raw_upload_id`, jobID, message).Scan(&rawUploadID)
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// CancelConversionJob makes cancellation durable before the worker observes it.
+// A running worker polls this state and terminates its child conversion process.
+// The source remains available for a later conversion attempt.
+func (s *Store) CancelConversionJob(ctx context.Context, jobID string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var rawUploadID string
+	err = tx.QueryRow(ctx, `
+UPDATE conversion_jobs
+SET status = 'canceled', current_step = 'canceled', finished_at = NOW()
+WHERE id = $1 AND status IN ('queued', 'running')
+RETURNING raw_upload_id`, jobID).Scan(&rawUploadID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var exists bool
+		if checkErr := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM conversion_jobs WHERE id = $1)`, jobID).Scan(&exists); checkErr != nil {
+			return checkErr
+		}
+		if !exists {
+			return ErrConversionJobNotFound
+		}
+		return ErrConversionJobNotActive
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE raw_uploads
+SET status = CASE WHEN EXISTS (
+  SELECT 1 FROM conversion_jobs WHERE raw_upload_id = $1 AND status = 'succeeded'
+) THEN 'converted' ELSE 'uploaded' END
+WHERE id = $1`, rawUploadID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// IsConversionJobCanceled lets a worker stop a long-running local tool without
+// exposing worker controls or S3 credentials through the browser API.
+func (s *Store) IsConversionJobCanceled(ctx context.Context, jobID string) (bool, error) {
+	var status string
+	err := s.pool.QueryRow(ctx, `SELECT status FROM conversion_jobs WHERE id = $1`, jobID).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrConversionJobNotFound
+	}
+	return status == "canceled", err
+}
+
+// DeleteConversionJob only removes an already canceled or failed history item.
+// Successful jobs retain their record because it owns a derived artifact.
+func (s *Store) DeleteConversionJob(ctx context.Context, jobID string) error {
+	command, err := s.pool.Exec(ctx, `
+DELETE FROM conversion_jobs
+WHERE id = $1 AND status IN ('failed', 'canceled') AND output_object_key IS NULL`, jobID)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() == 1 {
+		return nil
+	}
+	var exists bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM conversion_jobs WHERE id = $1)`, jobID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrConversionJobNotFound
+	}
+	return ErrConversionJobNotRemovable
 }
 
 // UpdateConversionProgress accepts only predefined workflow steps controlled by

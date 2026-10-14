@@ -149,6 +149,8 @@ func main() {
 	mux.Handle("DELETE /api/geodata/v1/uploads/{uploadID}", app.requireAdmin(http.HandlerFunc(app.deleteUpload)))
 	mux.Handle("GET /api/geodata/v1/jobs", app.requireAdmin(http.HandlerFunc(app.listConversionJobs)))
 	mux.Handle("POST /api/geodata/v1/jobs", app.requireAdmin(http.HandlerFunc(app.createConversionJob)))
+	mux.Handle("POST /api/geodata/v1/jobs/{jobID}/cancel", app.requireAdmin(http.HandlerFunc(app.cancelConversionJob)))
+	mux.Handle("DELETE /api/geodata/v1/jobs/{jobID}", app.requireAdmin(http.HandlerFunc(app.deleteConversionJob)))
 	address := os.Getenv("HTTP_ADDR")
 	if address == "" {
 		address = ":8090"
@@ -464,7 +466,7 @@ func (s *server) createConversionJob(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	job, err := s.store.CreateConversionJob(ctx, id, request.RawUploadID, request.MinZoom, request.MaxZoom, strings.TrimSpace(request.LayerName))
-	if errors.Is(err, catalog.ErrRawUploadNotFound) {
+	if errors.Is(err, catalog.ErrRawUploadNotFound) || errors.Is(err, catalog.ErrConversionJobNotActive) {
 		http.Error(w, "source data is not ready for conversion", http.StatusConflict)
 		return
 	}
@@ -476,6 +478,52 @@ func (s *server) createConversionJob(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(conversionJobResponse{ID: job.ID, RawUploadID: job.RawUploadID, Status: job.Status, MinZoom: job.MinZoom, MaxZoom: job.MaxZoom, LayerName: job.LayerName, CreatedAt: job.CreatedAt})
+}
+
+func (s *server) cancelConversionJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("jobID")
+	if !isUUID(id) {
+		http.Error(w, "invalid conversion job identifier", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if err := s.store.CancelConversionJob(ctx, id); err != nil {
+		switch {
+		case errors.Is(err, catalog.ErrConversionJobNotFound):
+			http.Error(w, "conversion job not found", http.StatusNotFound)
+		case errors.Is(err, catalog.ErrConversionJobNotActive):
+			http.Error(w, "conversion job is no longer active", http.StatusConflict)
+		default:
+			slog.Error("cancel conversion job", "job_id", id, "error", err)
+			http.Error(w, "could not cancel conversion job", http.StatusServiceUnavailable)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) deleteConversionJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("jobID")
+	if !isUUID(id) {
+		http.Error(w, "invalid conversion job identifier", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if err := s.store.DeleteConversionJob(ctx, id); err != nil {
+		switch {
+		case errors.Is(err, catalog.ErrConversionJobNotFound):
+			http.Error(w, "conversion job not found", http.StatusNotFound)
+		case errors.Is(err, catalog.ErrConversionJobNotRemovable):
+			http.Error(w, "only canceled or failed conversion jobs without output may be removed", http.StatusConflict)
+		default:
+			slog.Error("delete conversion job", "job_id", id, "error", err)
+			http.Error(w, "could not delete conversion job", http.StatusServiceUnavailable)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) deleteUpload(w http.ResponseWriter, r *http.Request) {

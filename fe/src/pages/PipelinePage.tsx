@@ -4,7 +4,7 @@ import {
   FormControl, InputLabel, LinearProgress, MenuItem, Paper, Select, Stack,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography,
 } from "@mui/material";
-import { CheckCircle2, Clock3, Play, RefreshCw, Workflow, XCircle } from "lucide-react";
+import { CheckCircle2, Clock3, Play, RefreshCw, Square, Trash2, Workflow, XCircle } from "lucide-react";
 import { useAuth } from "../auth";
 import { useI18n, type TranslationKey } from "../i18n";
 
@@ -15,6 +15,7 @@ type ConversionJob = {
   minZoom: number; maxZoom: number; layerName?: string; progress: number; currentStep: string;
   estimatedDurationSeconds?: number; createdAt: string; startedAt?: string | null;
 };
+type JobAction = { kind: "cancel" | "delete"; job: ConversionJob };
 
 const sourceStatusLabels: Record<string, TranslationKey> = {
   uploaded: "datasets.status.uploaded", converting: "datasets.status.converting",
@@ -55,6 +56,9 @@ export function PipelinePage() {
   const [layerName, setLayerName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(false);
+  const [pendingAction, setPendingAction] = useState<JobAction | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState(false);
 
   const readySources = useMemo(() => sources.filter((source) => ["uploaded", "failed", "converted"].includes(source.status)), [sources]);
   const loadData = useCallback(async () => {
@@ -98,6 +102,18 @@ export function PipelinePage() {
       setDialogOpen(false); await loadData();
     } catch { setCreateError(true); } finally { setCreating(false); }
   };
+  const performAction = async () => {
+    if (!accessToken || !pendingAction) return;
+    setActionBusy(true); setActionError(false);
+    try {
+      const { kind, job } = pendingAction;
+      const response = await fetch(kind === "cancel" ? `/api/geodata/v1/jobs/${job.id}/cancel` : `/api/geodata/v1/jobs/${job.id}`, {
+        method: kind === "cancel" ? "POST" : "DELETE", headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!response.ok) throw new Error("Could not update conversion task");
+      setPendingAction(null); await loadData();
+    } catch { setActionError(true); } finally { setActionBusy(false); }
+  };
 
   const counts = {
     queued: jobs.filter((job) => job.status === "queued").length,
@@ -126,13 +142,14 @@ export function PipelinePage() {
     </Box>
     {loadError && <Alert severity="error" action={<Button color="inherit" size="small" onClick={() => void loadData()}>{t("datasets.retry")}</Button>}>{t("pipeline.loadFailed")}</Alert>}
     {!loadError && readySources.length === 0 && !loading && <Alert severity="info">{t("pipeline.noReadySource")}</Alert>}
-    <TableContainer component={Paper} variant="outlined"><Table size="small" aria-label={t("nav.pipeline")}><TableHead><TableRow><TableCell>{t("pipeline.source")}</TableCell><TableCell>{t("pipeline.output")}</TableCell><TableCell>{t("pipeline.progress")}</TableCell><TableCell>{t("pipeline.time")}</TableCell><TableCell>{t("pipeline.status")}</TableCell></TableRow></TableHead><TableBody>
-      {jobs.length === 0 ? <TableRow><TableCell colSpan={5} sx={{ py: 5, textAlign: "center" }}><Typography color="text.secondary">{t("pipeline.empty")}</Typography></TableCell></TableRow> : jobs.map((job) => <TableRow key={job.id} hover>
+    <TableContainer component={Paper} variant="outlined"><Table size="small" aria-label={t("nav.pipeline")}><TableHead><TableRow><TableCell>{t("pipeline.source")}</TableCell><TableCell>{t("pipeline.output")}</TableCell><TableCell>{t("pipeline.progress")}</TableCell><TableCell>{t("pipeline.time")}</TableCell><TableCell>{t("pipeline.status")}</TableCell><TableCell align="right">{t("pipeline.actions")}</TableCell></TableRow></TableHead><TableBody>
+      {jobs.length === 0 ? <TableRow><TableCell colSpan={6} sx={{ py: 5, textAlign: "center" }}><Typography color="text.secondary">{t("pipeline.empty")}</Typography></TableCell></TableRow> : jobs.map((job) => <TableRow key={job.id} hover>
         <TableCell><Typography sx={{ fontWeight: 650 }}>{job.sourceName}</Typography><Typography variant="caption" color="text.secondary">{job.sourceFileName} · {formatName(job.sourceFormat)}</Typography></TableCell>
         <TableCell><Typography variant="body2">MBTiles</Typography><Typography variant="caption" color="text.secondary">{t("pipeline.zoomRange", { min: job.minZoom, max: job.maxZoom })}</Typography></TableCell>
         <TableCell sx={{ minWidth: 180 }}><Stack spacing={0.6}><LinearProgress variant="determinate" value={job.progress} color={job.status === "failed" ? "error" : job.status === "succeeded" ? "success" : "primary"} /><Typography variant="caption" color="text.secondary">{t(jobStepLabels[job.currentStep] ?? "pipeline.step.queued")} · {job.progress}%</Typography><Typography variant="caption" color="text.secondary">{estimateLabel(job)}</Typography></Stack></TableCell>
         <TableCell><Typography variant="caption">{formatDate(job.createdAt)}</Typography></TableCell>
         <TableCell><Chip size="small" color={job.status === "failed" ? "error" : job.status === "succeeded" ? "success" : job.status === "running" ? "primary" : "default"} icon={job.status === "succeeded" ? <CheckCircle2 size={13} /> : job.status === "failed" ? <XCircle size={13} /> : <Clock3 size={13} />} label={t(jobStatusLabels[job.status])} /></TableCell>
+        <TableCell align="right">{["queued", "running"].includes(job.status) ? <Button color="error" size="small" startIcon={<Square size={14} />} onClick={() => { setActionError(false); setPendingAction({ kind: "cancel", job }); }}>{t("pipeline.stop")}</Button> : ["failed", "canceled"].includes(job.status) ? <Button color="error" size="small" startIcon={<Trash2 size={14} />} onClick={() => { setActionError(false); setPendingAction({ kind: "delete", job }); }}>{t("pipeline.delete")}</Button> : ""}</TableCell>
       </TableRow>)}
     </TableBody></Table></TableContainer>
     <Dialog open={dialogOpen} onClose={() => !creating && setDialogOpen(false)} maxWidth="sm" fullWidth><DialogTitle sx={{ fontWeight: 750 }}>{t("pipeline.create")}</DialogTitle><DialogContent dividers><Stack spacing={2.5}>
@@ -142,5 +159,6 @@ export function PipelinePage() {
       <TextField fullWidth label={t("pipeline.layerName")} value={layerName} onChange={(event) => setLayerName(event.target.value)} slotProps={{ htmlInput: { maxLength: 120 } }} helperText={t("pipeline.layerNameHelp")} />
       {createError && <Alert severity="error">{t("pipeline.createFailed")}</Alert>}
     </Stack></DialogContent><DialogActions sx={{ p: 2 }}><Button onClick={() => setDialogOpen(false)} disabled={creating}>{t("pipeline.cancelDialog")}</Button><Button variant="contained" startIcon={<Play size={16} />} onClick={() => void createJob()} disabled={creating || !sourceID}>{t("pipeline.start")}</Button></DialogActions></Dialog>
+    <Dialog open={pendingAction !== null} onClose={() => !actionBusy && setPendingAction(null)} maxWidth="xs" fullWidth><DialogTitle sx={{ fontWeight: 750 }}>{pendingAction?.kind === "cancel" ? t("pipeline.stopTitle") : t("pipeline.deleteTitle")}</DialogTitle><DialogContent dividers><Stack spacing={2}><Typography>{pendingAction?.kind === "cancel" ? t("pipeline.stopDescription", { name: pendingAction.job.sourceName }) : t("pipeline.deleteDescription", { name: pendingAction?.job.sourceName ?? "" })}</Typography>{pendingAction?.kind === "cancel" && <Alert severity="warning">{t("pipeline.stopWarning")}</Alert>}{actionError && <Alert severity="error">{t("pipeline.actionFailed")}</Alert>}</Stack></DialogContent><DialogActions sx={{ p: 2 }}><Button onClick={() => setPendingAction(null)} disabled={actionBusy}>{t("pipeline.cancelDialog")}</Button><Button color="error" variant="contained" onClick={() => void performAction()} disabled={actionBusy}>{pendingAction?.kind === "cancel" ? t("pipeline.stop") : t("pipeline.delete")}</Button></DialogActions></Dialog>
   </Stack>;
 }

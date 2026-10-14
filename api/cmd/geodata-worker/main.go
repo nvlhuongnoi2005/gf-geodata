@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -22,6 +24,8 @@ import (
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/catalog"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/tiling"
 )
+
+var errConversionCanceled = errors.New("conversion canceled")
 
 type worker struct {
 	store         *catalog.Store
@@ -138,6 +142,10 @@ func (w *worker) processOne(parent context.Context) bool {
 
 	slog.Info("processing conversion job", "job_id", job.ID, "format", job.SourceFormat)
 	if err := w.runJob(parent, job); err != nil {
+		if errors.Is(err, errConversionCanceled) {
+			slog.Info("conversion job canceled", "job_id", job.ID)
+			return true
+		}
 		slog.Error("conversion job failed", "job_id", job.ID, "error", err)
 		failCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		if failErr := w.store.FailConversionJob(failCtx, job.ID, err.Error()); failErr != nil {
@@ -151,6 +159,9 @@ func (w *worker) processOne(parent context.Context) bool {
 }
 
 func (w *worker) runJob(ctx context.Context, job *catalog.ConversionJob) error {
+	jobCtx, wasCanceled, stopWatching := w.watchForCancellation(ctx, job.ID)
+	defer stopWatching()
+
 	workspace, err := os.MkdirTemp(w.workspaceRoot, "job-"+job.ID+"-")
 	if err != nil {
 		return fmt.Errorf("create workspace: %w", err)
@@ -158,35 +169,113 @@ func (w *worker) runJob(ctx context.Context, job *catalog.ConversionJob) error {
 	defer os.RemoveAll(workspace)
 
 	sourcePath := filepath.Join(workspace, "source"+sourceExtension(job.SourceFormat))
-	if err := w.download(ctx, job.RawObjectKey, sourcePath); err != nil {
+	if err := w.download(jobCtx, job.RawObjectKey, sourcePath); err != nil {
+		if wasCanceled() {
+			return errConversionCanceled
+		}
 		return err
 	}
-	if err := w.updateProgress(ctx, job.ID, 20, "converting"); err != nil {
+	if wasCanceled() {
+		return errConversionCanceled
+	}
+	if err := w.updateProgress(jobCtx, job.ID, 20, "converting"); err != nil {
+		if wasCanceled() {
+			return errConversionCanceled
+		}
 		return err
 	}
 	outputPath := filepath.Join(workspace, "output.mbtiles")
-	stopMonitoring := w.monitorConversionProgress(ctx, job)
-	if err := w.converter.Convert(ctx, tiling.Request{
+	stopMonitoring := w.monitorConversionProgress(jobCtx, job)
+	if err := w.converter.Convert(jobCtx, tiling.Request{
 		SourcePath: sourcePath, SourceType: job.SourceFormat, OutputPath: outputPath, Workspace: workspace,
 		MinZoom: job.MinZoom, MaxZoom: job.MaxZoom, LayerName: job.LayerName,
 	}); err != nil {
 		stopMonitoring()
+		if wasCanceled() {
+			return errConversionCanceled
+		}
 		return fmt.Errorf("convert source: %w", err)
 	}
 	stopMonitoring()
-	if err := w.updateProgress(ctx, job.ID, 90, "publishing"); err != nil {
+	if wasCanceled() {
+		return errConversionCanceled
+	}
+	if err := w.updateProgress(jobCtx, job.ID, 90, "publishing"); err != nil {
+		if wasCanceled() {
+			return errConversionCanceled
+		}
 		return err
 	}
 	objectKey := fmt.Sprintf("mbtiles/%s/%s.mbtiles", job.RawUploadID, job.ID)
-	if err := w.upload(ctx, objectKey, outputPath); err != nil {
+	if err := w.upload(jobCtx, objectKey, outputPath); err != nil {
+		if wasCanceled() {
+			return errConversionCanceled
+		}
 		return err
 	}
-	completeCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	if wasCanceled() {
+		w.deleteDerivedObject(objectKey)
+		return errConversionCanceled
+	}
+	completeCtx, cancel := context.WithTimeout(jobCtx, 20*time.Second)
 	defer cancel()
 	if err := w.store.CompleteConversionJob(completeCtx, job.ID, objectKey); err != nil {
+		w.deleteDerivedObject(objectKey)
+		if w.jobWasCanceled(job.ID) {
+			return errConversionCanceled
+		}
 		return fmt.Errorf("record completed conversion: %w", err)
 	}
 	return nil
+}
+
+// watchForCancellation turns the durable catalog cancellation state into a
+// canceled context. exec.CommandContext then stops Tilemaker/GDAL instead of
+// waiting for the current conversion to finish.
+func (w *worker) watchForCancellation(parent context.Context, jobID string) (context.Context, func() bool, func()) {
+	jobCtx, stop := context.WithCancel(parent)
+	var canceled atomic.Bool
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-jobCtx.Done():
+				return
+			case <-ticker.C:
+				checkCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				isCanceled, err := w.store.IsConversionJobCanceled(checkCtx, jobID)
+				cancel()
+				if err != nil {
+					slog.Warn("check conversion cancellation", "job_id", jobID, "error", err)
+					continue
+				}
+				if isCanceled {
+					canceled.Store(true)
+					stop()
+					return
+				}
+			}
+		}
+	}()
+	return jobCtx, canceled.Load, func() { stop(); <-done }
+}
+
+func (w *worker) jobWasCanceled(jobID string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	canceled, err := w.store.IsConversionJobCanceled(ctx, jobID)
+	return err == nil && canceled
+}
+
+func (w *worker) deleteDerivedObject(objectKey string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if _, err := w.objectStore.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(w.derivedBucket), Key: aws.String(objectKey)}); err != nil {
+		slog.Warn("remove canceled conversion output", "object_key", objectKey, "error", err)
+	}
 }
 
 func (w *worker) updateProgress(parent context.Context, jobID string, progress int, step string) error {
