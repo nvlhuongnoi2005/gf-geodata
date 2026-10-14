@@ -50,20 +50,24 @@ type RawUpload struct {
 // ConversionJob is an internal work item. RawObjectKey is intentionally not
 // exposed through the HTTP API; only the worker needs it to read from S3.
 type ConversionJob struct {
-	ID              string
-	RawUploadID     string
-	SourceFileName  string
-	SourceFormat    string
-	RawObjectKey    string
-	Status          string
-	MinZoom         int
-	MaxZoom         int
-	LayerName       string
-	OutputObjectKey string
-	FailureMessage  string
-	CreatedAt       time.Time
-	StartedAt       *time.Time
-	FinishedAt      *time.Time
+	ID               string
+	RawUploadID      string
+	SourceFileName   string
+	SourceFormat     string
+	RawObjectKey     string
+	Status           string
+	MinZoom          int
+	MaxZoom          int
+	LayerName        string
+	SourceByteSize   int64
+	Progress         int
+	CurrentStep      string
+	EstimatedSeconds *int
+	OutputObjectKey  string
+	FailureMessage   string
+	CreatedAt        time.Time
+	StartedAt        *time.Time
+	FinishedAt       *time.Time
 }
 
 type JobCounts struct {
@@ -75,18 +79,21 @@ type JobCounts struct {
 // ConversionJobView is safe for the user interface. It contains catalog names
 // and progress state, never S3 keys, credentials, or worker diagnostics.
 type ConversionJobView struct {
-	ID           string     `json:"id"`
-	RawUploadID  string     `json:"rawUploadId"`
-	SourceName   string     `json:"sourceName"`
-	SourceFile   string     `json:"sourceFileName"`
-	SourceFormat string     `json:"sourceFormat"`
-	Status       string     `json:"status"`
-	MinZoom      int        `json:"minZoom"`
-	MaxZoom      int        `json:"maxZoom"`
-	LayerName    string     `json:"layerName,omitempty"`
-	CreatedAt    time.Time  `json:"createdAt"`
-	StartedAt    *time.Time `json:"startedAt"`
-	FinishedAt   *time.Time `json:"finishedAt"`
+	ID               string     `json:"id"`
+	RawUploadID      string     `json:"rawUploadId"`
+	SourceName       string     `json:"sourceName"`
+	SourceFile       string     `json:"sourceFileName"`
+	SourceFormat     string     `json:"sourceFormat"`
+	Status           string     `json:"status"`
+	MinZoom          int        `json:"minZoom"`
+	MaxZoom          int        `json:"maxZoom"`
+	LayerName        string     `json:"layerName,omitempty"`
+	Progress         int        `json:"progress"`
+	CurrentStep      string     `json:"currentStep"`
+	EstimatedSeconds *int       `json:"estimatedDurationSeconds,omitempty"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	StartedAt        *time.Time `json:"startedAt"`
+	FinishedAt       *time.Time `json:"finishedAt"`
 }
 
 type NewRawUpload struct {
@@ -243,9 +250,9 @@ INSERT INTO conversion_jobs (id, raw_upload_id, min_zoom, max_zoom, layer_name)
 SELECT $1, id, $3, $4, NULLIF($5, '')
 FROM raw_uploads
 WHERE id = $2 AND status IN ('uploaded', 'failed', 'converted')
-RETURNING id, raw_upload_id, status, min_zoom, max_zoom, COALESCE(layer_name, ''), created_at`,
+RETURNING id, raw_upload_id, status, min_zoom, max_zoom, COALESCE(layer_name, ''), progress, current_step, created_at`,
 		id, rawUploadID, minZoom, maxZoom, layerName,
-	).Scan(&job.ID, &job.RawUploadID, &job.Status, &job.MinZoom, &job.MaxZoom, &job.LayerName, &job.CreatedAt)
+	).Scan(&job.ID, &job.RawUploadID, &job.Status, &job.MinZoom, &job.MaxZoom, &job.LayerName, &job.Progress, &job.CurrentStep, &job.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ConversionJob{}, ErrRawUploadNotFound
 	}
@@ -255,7 +262,7 @@ RETURNING id, raw_upload_id, status, min_zoom, max_zoom, COALESCE(layer_name, ''
 func (s *Store) ListConversionJobs(ctx context.Context, limit int) ([]ConversionJobView, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT j.id, j.raw_upload_id, r.display_name, r.source_file_name, r.source_format,
-       j.status, j.min_zoom, j.max_zoom, COALESCE(j.layer_name, ''), j.created_at,
+       j.status, j.min_zoom, j.max_zoom, COALESCE(j.layer_name, ''), j.progress, j.current_step, j.estimated_duration_seconds, j.created_at,
        j.started_at, j.finished_at
 FROM conversion_jobs j
 JOIN raw_uploads r ON r.id = j.raw_upload_id
@@ -269,7 +276,7 @@ LIMIT $1`, limit)
 	for rows.Next() {
 		var item ConversionJobView
 		if err := rows.Scan(&item.ID, &item.RawUploadID, &item.SourceName, &item.SourceFile,
-			&item.SourceFormat, &item.Status, &item.MinZoom, &item.MaxZoom, &item.LayerName,
+			&item.SourceFormat, &item.Status, &item.MinZoom, &item.MaxZoom, &item.LayerName, &item.Progress, &item.CurrentStep, &item.EstimatedSeconds,
 			&item.CreatedAt, &item.StartedAt, &item.FinishedAt); err != nil {
 			return nil, err
 		}
@@ -288,7 +295,7 @@ func (s *Store) ClaimConversionJob(ctx context.Context) (*ConversionJob, error) 
 	defer func() { _ = tx.Rollback(ctx) }()
 	job := &ConversionJob{}
 	err = tx.QueryRow(ctx, `
-SELECT j.id, j.raw_upload_id, r.source_file_name, r.source_format, r.raw_object_key,
+SELECT j.id, j.raw_upload_id, r.source_file_name, r.source_format, r.raw_object_key, r.byte_size,
        j.status, j.min_zoom, j.max_zoom, COALESCE(j.layer_name, ''), j.created_at
 FROM conversion_jobs j
 JOIN raw_uploads r ON r.id = j.raw_upload_id
@@ -296,7 +303,7 @@ WHERE j.status = 'queued'
 ORDER BY j.created_at
 FOR UPDATE OF j SKIP LOCKED
 LIMIT 1`).Scan(
-		&job.ID, &job.RawUploadID, &job.SourceFileName, &job.SourceFormat, &job.RawObjectKey,
+		&job.ID, &job.RawUploadID, &job.SourceFileName, &job.SourceFormat, &job.RawObjectKey, &job.SourceByteSize,
 		&job.Status, &job.MinZoom, &job.MaxZoom, &job.LayerName, &job.CreatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -306,13 +313,25 @@ LIMIT 1`).Scan(
 		return nil, err
 	}
 	now := time.Now().UTC()
-	if _, err := tx.Exec(ctx, `UPDATE conversion_jobs SET status = 'running', started_at = $2 WHERE id = $1`, job.ID, now); err != nil {
+	var estimate *int
+	if err := tx.QueryRow(ctx, `
+SELECT ROUND(AVG(EXTRACT(EPOCH FROM completed.finished_at - completed.started_at)))::INTEGER
+FROM conversion_jobs completed
+JOIN raw_uploads completed_source ON completed_source.id = completed.raw_upload_id
+WHERE completed.status = 'succeeded'
+  AND completed.finished_at IS NOT NULL
+  AND completed.started_at IS NOT NULL
+  AND completed_source.source_format = $1
+  AND completed_source.byte_size BETWEEN GREATEST(1, $2 / 2) AND $2 * 2`, job.SourceFormat, job.SourceByteSize).Scan(&estimate); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE conversion_jobs SET status = 'running', progress = 5, current_step = 'downloading', started_at = $2, estimated_duration_seconds = $3 WHERE id = $1`, job.ID, now, estimate); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE raw_uploads SET status = 'converting' WHERE id = $1`, job.RawUploadID); err != nil {
 		return nil, err
 	}
-	job.Status, job.StartedAt = "running", &now
+	job.Status, job.Progress, job.CurrentStep, job.StartedAt, job.EstimatedSeconds = "running", 5, "downloading", &now, estimate
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -328,7 +347,7 @@ func (s *Store) CompleteConversionJob(ctx context.Context, jobID, outputObjectKe
 	var rawUploadID string
 	err = tx.QueryRow(ctx, `
 UPDATE conversion_jobs
-SET status = 'succeeded', output_object_key = $2, finished_at = NOW(), failure_message = NULL
+SET status = 'succeeded', progress = 100, current_step = 'succeeded', output_object_key = $2, finished_at = NOW(), failure_message = NULL
 WHERE id = $1 AND status = 'running'
 RETURNING raw_upload_id`, jobID, outputObjectKey).Scan(&rawUploadID)
 	if err != nil {
@@ -349,7 +368,7 @@ func (s *Store) FailConversionJob(ctx context.Context, jobID, message string) er
 	var rawUploadID string
 	err = tx.QueryRow(ctx, `
 UPDATE conversion_jobs
-SET status = 'failed', failure_message = LEFT($2, 4000), finished_at = NOW()
+SET status = 'failed', current_step = 'failed', failure_message = LEFT($2, 4000), finished_at = NOW()
 WHERE id = $1 AND status = 'running'
 RETURNING raw_upload_id`, jobID, message).Scan(&rawUploadID)
 	if err != nil {
@@ -359,4 +378,22 @@ RETURNING raw_upload_id`, jobID, message).Scan(&rawUploadID)
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// UpdateConversionProgress accepts only predefined workflow steps controlled by
+// the worker; arbitrary diagnostic text never reaches the user interface.
+func (s *Store) UpdateConversionProgress(ctx context.Context, jobID string, progress int, step string) error {
+	if progress < 0 || progress > 100 {
+		return errors.New("conversion progress must be between 0 and 100")
+	}
+	switch step {
+	case "downloading", "converting", "publishing":
+	default:
+		return errors.New("invalid conversion step")
+	}
+	_, err := s.pool.Exec(ctx, `
+UPDATE conversion_jobs
+SET progress = GREATEST(progress, $2), current_step = $3
+WHERE id = $1 AND status = 'running'`, jobID, progress, step)
+	return err
 }
