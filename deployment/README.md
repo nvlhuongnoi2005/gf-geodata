@@ -16,10 +16,23 @@ them to a file. Keep the resulting values in your password manager for rotation.
 kubectl apply -f deployment/namespace.yaml
 kubectl create namespace storage --dry-run=client -o yaml | kubectl apply -f -
 
-$adminKey = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(10))
-$adminSecret = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).TrimEnd('=').Replace('+','-').Replace('/','_')
-$uploadKey = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(10))
-$uploadSecret = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).TrimEnd('=').Replace('+','-').Replace('/','_')
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+try {
+  $adminKeyBytes = New-Object byte[] 10
+  $adminSecretBytes = New-Object byte[] 32
+  $uploadKeyBytes = New-Object byte[] 10
+  $uploadSecretBytes = New-Object byte[] 32
+  $rng.GetBytes($adminKeyBytes)
+  $rng.GetBytes($adminSecretBytes)
+  $rng.GetBytes($uploadKeyBytes)
+  $rng.GetBytes($uploadSecretBytes)
+} finally {
+  $rng.Dispose()
+}
+$adminKey = [BitConverter]::ToString($adminKeyBytes).Replace('-', '')
+$adminSecret = [Convert]::ToBase64String($adminSecretBytes)
+$uploadKey = [BitConverter]::ToString($uploadKeyBytes).Replace('-', '')
+$uploadSecret = [Convert]::ToBase64String($uploadSecretBytes)
 $config = @{
   identities = @(
     @{ name = 'bootstrap-admin'; credentials = @(@{ accessKey = $adminKey; secretKey = $adminSecret }); actions = @('Admin','Read','Write','List','Tagging') },
