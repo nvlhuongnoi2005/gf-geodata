@@ -3,6 +3,11 @@ name: Publish development frontend image
 on:
   push:
     branches: [master]
+    paths:
+      - fe/**
+      - package.json
+      - package-lock.json
+      - .github/workflows/publish-dev-image.yml
   workflow_dispatch:
 
 # The package is published as ghcr.io/<owner>/tile-server/front-end.
