@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: seaweedfs-s3-private
+  namespace: storage
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: seaweedfs
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tile-server
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-upload
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-bucket-bootstrap
+      ports:
+        - protocol: TCP
+          port: 8333

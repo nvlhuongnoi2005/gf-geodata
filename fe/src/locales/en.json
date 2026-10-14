@@ -95,7 +95,7 @@
   "datasets.unknownFileType": "Unknown file type",
   "datasets.uploadApiRequired": "The upload service is not available yet. No dataset is created until the service confirms the upload.",
   "datasets.startUpload": "Start upload",
-  "datasets.uploadSucceeded": "The file was sent successfully. It will appear in the catalog after the service finishes processing it.",
+  "datasets.uploadSucceeded": "The file is stored in raw data storage. Catalog and pipeline integration will be added in a later step.",
   "datasets.uploadFailed": "The file could not be uploaded. Please try again.",
   "style.title": "Style Studio",
   "style.description": "Edit map styles and preview live in MapLibre before saving a version.",

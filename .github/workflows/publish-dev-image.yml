@@ -5,6 +5,7 @@ on:
     branches: [master]
     paths:
       - fe/**
+      - fe/nginx.conf
       - package.json
       - package-lock.json
       - .github/workflows/publish-dev-image.yml

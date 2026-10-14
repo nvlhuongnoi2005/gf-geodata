@@ -95,7 +95,7 @@
   "datasets.unknownFileType": "Không xác định loại tệp",
   "datasets.uploadApiRequired": "Dịch vụ tải lên chưa sẵn sàng. Hệ thống chỉ tạo dữ liệu nguồn sau khi dịch vụ xác nhận tải lên.",
   "datasets.startUpload": "Bắt đầu tải lên",
-  "datasets.uploadSucceeded": "Tệp đã được gửi thành công. Dữ liệu sẽ xuất hiện trong danh mục sau khi dịch vụ xử lý xong.",
+  "datasets.uploadSucceeded": "Tệp đã được lưu vào kho dữ liệu nguồn. Tích hợp danh mục và pipeline sẽ được bổ sung ở bước tiếp theo.",
   "datasets.uploadFailed": "Không thể tải lên tệp. Vui lòng thử lại.",
   "style.title": "Style Studio",
   "style.description": "Chỉnh sửa style và xem trước trực quan MapLibre trước khi lưu phiên bản.",

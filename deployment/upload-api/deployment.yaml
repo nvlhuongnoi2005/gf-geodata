@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: geodata-upload
+  namespace: tile-server
+  labels:
+    app.kubernetes.io/name: geodata-upload
+    app.kubernetes.io/part-of: geodata
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: geodata-upload
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: geodata-upload
+        app.kubernetes.io/part-of: geodata
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: upload-api
+          image: ghcr.io/nvlhuongnoi2005/tile-server/geodata-upload:dev
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8090
+          env:
+            - name: HTTP_ADDR
+              value: ":8090"
+            - name: S3_ENDPOINT
+              value: http://seaweedfs-s3.storage.svc.cluster.local:8333
+            - name: S3_BUCKET
+              value: geodata-raw
+            - name: S3_REGION
+              value: us-east-1
+            - name: MAX_UPLOAD_BYTES
+              value: "53687091200"
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: geodata-upload-s3
+                  key: access-key
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: geodata-upload-s3
+                  key: secret-key
+            - name: AUTH_JWKS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: geodata-upload-auth
+                  key: jwks-url
+            - name: AUTH_ISSUER
+              valueFrom:
+                secretKeyRef:
+                  name: geodata-upload-auth
+                  key: issuer
+            - name: AUTH_AUDIENCE
+              valueFrom:
+                secretKeyRef:
+                  name: geodata-upload-auth
+                  key: audience
+            - name: AUTH_ADMIN_ROLE
+              value: admin
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities:
+              drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: geodata-upload
+  namespace: tile-server
+  labels:
+    app.kubernetes.io/name: geodata-upload
+    app.kubernetes.io/part-of: geodata
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: geodata-upload
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http

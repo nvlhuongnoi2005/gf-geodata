@@ -1,0 +1,57 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: geodata-bucket-bootstrap
+  namespace: storage
+  labels:
+    app.kubernetes.io/name: geodata-bucket-bootstrap
+    app.kubernetes.io/part-of: geodata
+spec:
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: geodata-bucket-bootstrap
+        app.kubernetes.io/part-of: geodata
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      containers:
+        - name: create-buckets
+          image: amazon/aws-cli:2.27.41
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              endpoint=http://seaweedfs-s3.storage.svc.cluster.local:8333
+              until aws --endpoint-url "$endpoint" s3api list-buckets >/dev/null 2>&1; do
+                sleep 3
+              done
+              for bucket in geodata-raw geodata-derived geodata-published; do
+                if ! aws --endpoint-url "$endpoint" s3api head-bucket --bucket "$bucket" >/dev/null 2>&1; then
+                  aws --endpoint-url "$endpoint" s3api create-bucket --bucket "$bucket"
+                fi
+              done
+              aws --endpoint-url "$endpoint" s3api put-bucket-versioning \
+                --bucket geodata-raw --versioning-configuration Status=Enabled
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: geodata-s3-bootstrap
+                  key: access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: geodata-s3-bootstrap
+                  key: secret-key
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1
+            - name: AWS_EC2_METADATA_DISABLED
+              value: "true"
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi

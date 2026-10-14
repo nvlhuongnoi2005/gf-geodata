@@ -1,5 +1,4 @@
-# Geodata Admin is a static UI. It requires no pod-level egress; browser
-# requests to /auth and /api are routed through the shared internal ingress.
+# /auth and /api requests are proxied by this pod to their internal services.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -32,6 +31,16 @@ spec:
       ports:
         - protocol: TCP
           port: 3001
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tile-server
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-upload
+      ports:
+        - protocol: TCP
+          port: 8090
     - to:
         - namespaceSelector:
             matchLabels:

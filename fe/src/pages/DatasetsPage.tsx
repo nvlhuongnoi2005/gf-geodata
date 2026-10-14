@@ -8,12 +8,14 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  LinearProgress,
   Paper,
   Stack,
   Typography,
 } from "@mui/material";
 import { Database, FileUp, ShieldCheck, UploadCloud } from "lucide-react";
 import { useI18n } from "../i18n";
+import { useAuth } from "../auth";
 
 const acceptedFileTypes = ".osm.pbf,.tif,.tiff,.gpkg,.zip,.mbtiles";
 
@@ -24,13 +26,49 @@ function formatFileSize(bytes: number): string {
 
 export function DatasetsPage() {
   const { t } = useI18n();
+  const { accessToken } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadPanelOpen, setUploadPanelOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadMessage, setUploadMessage] = useState<"success" | "error" | null>(null);
 
   const openUploadPanel = () => {
     setSelectedFile(null);
+    setUploadProgress(0);
+    setUploadMessage(null);
     setUploadPanelOpen(true);
+  };
+
+  const startUpload = () => {
+    if (!selectedFile || !accessToken || uploading) return;
+    setUploading(true);
+    setUploadProgress(0);
+    setUploadMessage(null);
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", `/api/geodata/v1/uploads?filename=${encodeURIComponent(selectedFile.name)}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) setUploadProgress(Math.round((event.loaded / event.total) * 100));
+    };
+    xhr.onload = () => {
+      setUploading(false);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        setUploadProgress(100);
+        setUploadMessage("success");
+        setSelectedFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      } else {
+        setUploadMessage("error");
+      }
+    };
+    xhr.onerror = () => {
+      setUploading(false);
+      setUploadMessage("error");
+    };
+    xhr.send(selectedFile);
   };
 
   return (
@@ -173,17 +211,25 @@ export function DatasetsPage() {
               onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
             />
 
-            <Alert severity="info">{t("datasets.uploadApiRequired")}</Alert>
+            {uploading && <LinearProgress variant="determinate" value={uploadProgress} />}
+            {uploadMessage && (
+              <Alert severity={uploadMessage === "success" ? "success" : "error"}>
+                {t(
+                  uploadMessage === "success" ? "datasets.uploadSucceeded" : "datasets.uploadFailed"
+                )}
+              </Alert>
+            )}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
-          <Button variant="outlined" onClick={() => setUploadPanelOpen(false)}>
+          <Button variant="outlined" disabled={uploading} onClick={() => setUploadPanelOpen(false)}>
             {t("common.close")}
           </Button>
           <Button
             variant="contained"
-            disabled
+            disabled={!selectedFile || !accessToken || uploading}
             startIcon={<UploadCloud size={16} />}
+            onClick={startUpload}
           >
             {t("datasets.startUpload")}
           </Button>
