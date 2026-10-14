@@ -1,14 +1,15 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Box, Paper, Stack, Typography } from "@mui/material";
 import { Database, HardDrive, Layers, Workflow } from "lucide-react";
 import { useI18n } from "../i18n";
+import { useAuth } from "../auth";
 
 type ServiceState = "ready" | "degraded" | "unavailable";
 type Summary = {
   datasets: number;
   jobs: { queued: number; running: number; failed: number };
   releases: number;
-  services: Array<{ name: "authentication" | "storage" | "tiles"; state: ServiceState }>;
+  services: Array<{ name: "authentication" | "storage" | "catalog" | "tiles"; state: ServiceState }>;
 };
 
 const serviceLabels: Record<ServiceState, string> = {
@@ -23,10 +24,38 @@ function getServiceState(summary: Summary | null, name: Summary["services"][numb
 
 export function DashboardPage() {
   const { t } = useI18n();
-  const [summary] = useState<Summary | null>(null);
+  const { accessToken } = useAuth();
+  const [summary, setSummary] = useState<Summary | null>(null);
+
+  useEffect(() => {
+    if (!accessToken) {
+      setSummary(null);
+      return;
+    }
+    let disposed = false;
+    const loadSummary = async () => {
+      try {
+        const response = await fetch("/api/geodata/v1/summary", {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!response.ok) throw new Error("Could not load system summary");
+        const data = (await response.json()) as Summary;
+        if (!disposed) setSummary(data);
+      } catch {
+        if (!disposed) setSummary(null);
+      }
+    };
+    void loadSummary();
+    const refreshTimer = window.setInterval(() => void loadSummary(), 30_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(refreshTimer);
+    };
+  }, [accessToken]);
 
   const authState = getServiceState(summary, "authentication");
   const storageState = getServiceState(summary, "storage");
+  const catalogState = getServiceState(summary, "catalog");
   const tilesState = getServiceState(summary, "tiles");
 
   return (
@@ -109,6 +138,7 @@ export function DashboardPage() {
         <Stack spacing={2}>
           <HealthRow label={t("dashboard.mapAuth")} state={authState} />
           <HealthRow label={t("dashboard.storageBackend")} state={storageState} />
+          <HealthRow label={t("dashboard.catalogDatabase")} state={catalogState} />
           <HealthRow label={t("dashboard.tileGateway")} state={tilesState} />
         </Stack>
 

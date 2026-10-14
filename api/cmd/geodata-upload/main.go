@@ -31,6 +31,31 @@ type uploadListResponse struct {
 	Items []catalog.RawUpload `json:"items"`
 }
 
+type serviceState string
+
+const (
+	serviceReady       serviceState = "ready"
+	serviceDegraded    serviceState = "degraded"
+	serviceUnavailable serviceState = "unavailable"
+)
+
+type serviceSummary struct {
+	Name  string       `json:"name"`
+	State serviceState `json:"state"`
+}
+
+type summaryResponse struct {
+	Datasets int `json:"datasets"`
+	Jobs     struct {
+		Queued  int `json:"queued"`
+		Running int `json:"running"`
+		Failed  int `json:"failed"`
+	} `json:"jobs"`
+	Releases  int              `json:"releases"`
+	Services  []serviceSummary `json:"services"`
+	Generated time.Time        `json:"generatedAt"`
+}
+
 type actorContextKey struct{}
 
 func required(name string) string {
@@ -53,7 +78,8 @@ func main() {
 	store := openCatalog(ctx)
 	defer store.Close()
 
-	keys, err := keyfunc.NewDefaultCtx(ctx, []string{required("AUTH_JWKS_URL")})
+	jwksURL := required("AUTH_JWKS_URL")
+	keys, err := keyfunc.NewDefaultCtx(ctx, []string{jwksURL})
 	if err != nil {
 		log.Fatalf("load auth JWKS: %v", err)
 	}
@@ -88,11 +114,15 @@ func main() {
 	app := &server{
 		keys: keys, issuer: issuer, audience: audience, adminRole: roleName,
 		bucket: required("S3_BUCKET"), maxUploadBytes: maxBytes, uploader: uploader,
-		objectStore: objectStore, store: store, uploadSlots: make(chan struct{}, 2),
+		objectStore: objectStore, store: store, authJWKSURL: jwksURL,
+		tileGatewayHealthURL: strings.TrimSpace(os.Getenv("TILE_GATEWAY_HEALTH_URL")),
+		healthClient:         &http.Client{Timeout: 3 * time.Second},
+		uploadSlots:          make(chan struct{}, 2),
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.Handle("GET /api/geodata/v1/summary", app.requireAdmin(http.HandlerFunc(app.summary)))
 	mux.Handle("GET /api/geodata/v1/uploads", app.requireAdmin(http.HandlerFunc(app.listUploads)))
 	mux.Handle("PUT /api/geodata/v1/uploads", app.requireAdmin(http.HandlerFunc(app.upload)))
 	address := os.Getenv("HTTP_ADDR")
@@ -142,6 +172,8 @@ type server struct {
 	uploader                            *manager.Uploader
 	objectStore                         *s3.Client
 	store                               *catalog.Store
+	authJWKSURL, tileGatewayHealthURL   string
+	healthClient                        *http.Client
 	uploadSlots                         chan struct{}
 }
 
@@ -209,6 +241,70 @@ func (s *server) listUploads(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(uploadListResponse{Items: items})
+}
+
+func (s *server) summary(w http.ResponseWriter, r *http.Request) {
+	response := summaryResponse{Generated: time.Now().UTC()}
+	response.Services = []serviceSummary{
+		{Name: "authentication", State: s.checkHTTPService(r.Context(), s.authJWKSURL)},
+		{Name: "storage", State: s.checkStorage(r.Context())},
+		{Name: "catalog", State: s.checkCatalog(r.Context(), &response.Datasets)},
+		{Name: "tiles", State: s.checkOptionalHTTPService(r.Context(), s.tileGatewayHealthURL)},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func (s *server) checkHTTPService(parent context.Context, endpoint string) serviceState {
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return serviceDegraded
+	}
+	response, err := s.healthClient.Do(request)
+	if err != nil {
+		return serviceDegraded
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return serviceDegraded
+	}
+	return serviceReady
+}
+
+func (s *server) checkOptionalHTTPService(ctx context.Context, endpoint string) serviceState {
+	if endpoint == "" {
+		return serviceUnavailable
+	}
+	return s.checkHTTPService(ctx, endpoint)
+}
+
+func (s *server) checkStorage(parent context.Context) serviceState {
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+	defer cancel()
+	_, err := s.objectStore.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(s.bucket)})
+	if err != nil {
+		slog.Warn("storage health check failed", "error", err)
+		return serviceDegraded
+	}
+	return serviceReady
+}
+
+func (s *server) checkCatalog(parent context.Context, datasets *int) serviceState {
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+	defer cancel()
+	if err := s.store.Health(ctx); err != nil {
+		slog.Warn("catalog health check failed", "error", err)
+		return serviceDegraded
+	}
+	count, err := s.store.CountRawUploads(ctx)
+	if err != nil {
+		slog.Warn("catalog count failed", "error", err)
+		return serviceDegraded
+	}
+	*datasets = count
+	return serviceReady
 }
 
 func (s *server) upload(w http.ResponseWriter, r *http.Request) {

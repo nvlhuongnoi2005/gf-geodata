@@ -77,6 +77,7 @@
   "dashboard.connected": "Ready",
   "dashboard.notVerified": "Not connected",
   "dashboard.storageBackend": "Storage infrastructure",
+  "dashboard.catalogDatabase": "Source data catalog",
   "dashboard.notBootstrapped": "Not ready",
   "dashboard.tileGateway": "Tile gateway",
   "dashboard.notConfigured": "Not ready",

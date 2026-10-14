@@ -82,6 +82,16 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return err
 }
 
+func (s *Store) Health(ctx context.Context) error {
+	return s.pool.Ping(ctx)
+}
+
+func (s *Store) CountRawUploads(ctx context.Context) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM raw_uploads").Scan(&count)
+	return count, err
+}
+
 func IsDataType(value string) bool {
 	_, ok := dataTypes[value]
 	return ok

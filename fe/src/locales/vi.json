@@ -77,6 +77,7 @@
   "dashboard.connected": "Sẵn sàng",
   "dashboard.notVerified": "Chưa kết nối",
   "dashboard.storageBackend": "Hạ tầng lưu trữ",
+  "dashboard.catalogDatabase": "Danh mục dữ liệu nguồn",
   "dashboard.notBootstrapped": "Chưa sẵn sàng",
   "dashboard.tileGateway": "Tile gateway",
   "dashboard.notConfigured": "Chưa sẵn sàng",
