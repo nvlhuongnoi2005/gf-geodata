@@ -283,7 +283,10 @@ func (s *server) checkOptionalHTTPService(ctx context.Context, endpoint string) 
 func (s *server) checkStorage(parent context.Context) serviceState {
 	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 	defer cancel()
-	_, err := s.objectStore.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(s.bucket)})
+	_, err := s.objectStore.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket:  aws.String(s.bucket),
+		MaxKeys: aws.Int32(1),
+	})
 	if err != nil {
 		slog.Warn("storage health check failed", "error", err)
 		return serviceDegraded

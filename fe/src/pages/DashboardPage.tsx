@@ -57,6 +57,13 @@ export function DashboardPage() {
   const storageState = getServiceState(summary, "storage");
   const catalogState = getServiceState(summary, "catalog");
   const tilesState = getServiceState(summary, "tiles");
+  const storageDetail = summary
+    ? storageState === "ready"
+      ? t("dashboard.rawStorageReadyDetail")
+      : storageState === "degraded"
+        ? t("dashboard.rawStorageDegradedDetail")
+        : t("dashboard.rawStorageUnavailableDetail")
+    : t("dashboard.rawStorageDetail");
 
   return (
     <Stack spacing={3}>
@@ -104,7 +111,7 @@ export function DashboardPage() {
           icon={<HardDrive size={20} />}
           label={t("dashboard.rawStorage")}
           value={summary ? serviceLabels[storageState] : "—"}
-          subtitle={t("dashboard.rawStorageDetail")}
+          subtitle={storageDetail}
           tone="amber"
         />
         <MetricCard
