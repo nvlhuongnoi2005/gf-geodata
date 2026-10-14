@@ -18,6 +18,9 @@ spec:
         app.kubernetes.io/part-of: geodata
     spec:
       automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
       imagePullSecrets:
         - name: ghcr-pull
       containers:
@@ -36,6 +39,8 @@ spec:
               value: geodata-raw
             - name: S3_DERIVED_BUCKET
               value: geodata-derived
+            - name: TILE_CACHE_DIR
+              value: /var/cache/geodata/tiles
             - name: S3_REGION
               value: us-east-1
             - name: MAX_UPLOAD_BYTES
@@ -71,6 +76,9 @@ spec:
                 secretKeyRef:
                   name: geodata-upload-s3
                   key: secret-key
+          volumeMounts:
+            - name: tile-cache
+              mountPath: /var/cache/geodata/tiles
             - name: AUTH_JWKS_URL
               valueFrom:
                 secretKeyRef:
@@ -111,6 +119,10 @@ spec:
             runAsUser: 10001
             capabilities:
               drop: [ALL]
+      volumes:
+        - name: tile-cache
+          emptyDir:
+            sizeLimit: 20Gi
 ---
 apiVersion: v1
 kind: Service

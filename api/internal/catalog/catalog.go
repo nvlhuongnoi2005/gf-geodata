@@ -101,6 +101,23 @@ type ConversionJobView struct {
 	FinishedAt       *time.Time `json:"finishedAt"`
 }
 
+// ConversionArtifactView is the safe, browser-facing metadata for a successful
+// MBTiles conversion. Object keys stay in ConversionArtifact only.
+type ConversionArtifactView struct {
+	ID             string    `json:"id"`
+	SourceName     string    `json:"sourceName"`
+	SourceFileName string    `json:"sourceFileName"`
+	SourceFormat   string    `json:"sourceFormat"`
+	MinZoom        int       `json:"minZoom"`
+	MaxZoom        int       `json:"maxZoom"`
+	CreatedAt      time.Time `json:"createdAt"`
+}
+
+type ConversionArtifact struct {
+	ConversionArtifactView
+	OutputObjectKey string
+}
+
 type NewRawUpload struct {
 	RawUpload
 	ObjectKey string
@@ -310,6 +327,45 @@ LIMIT $1`, limit)
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (s *Store) ListConversionArtifacts(ctx context.Context, limit int) ([]ConversionArtifactView, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT j.id, r.display_name, r.source_file_name, r.source_format, j.min_zoom, j.max_zoom, j.finished_at
+FROM conversion_jobs j
+JOIN raw_uploads r ON r.id = j.raw_upload_id
+WHERE j.status = 'succeeded' AND j.output_object_key IS NOT NULL
+ORDER BY j.finished_at DESC
+LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]ConversionArtifactView, 0)
+	for rows.Next() {
+		var item ConversionArtifactView
+		if err := rows.Scan(&item.ID, &item.SourceName, &item.SourceFileName, &item.SourceFormat, &item.MinZoom, &item.MaxZoom, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ConversionArtifact(ctx context.Context, id string) (ConversionArtifact, error) {
+	var artifact ConversionArtifact
+	err := s.pool.QueryRow(ctx, `
+SELECT j.id, r.display_name, r.source_file_name, r.source_format, j.min_zoom, j.max_zoom, j.finished_at, j.output_object_key
+FROM conversion_jobs j
+JOIN raw_uploads r ON r.id = j.raw_upload_id
+WHERE j.id = $1 AND j.status = 'succeeded' AND j.output_object_key IS NOT NULL`, id).Scan(
+		&artifact.ID, &artifact.SourceName, &artifact.SourceFileName, &artifact.SourceFormat,
+		&artifact.MinZoom, &artifact.MaxZoom, &artifact.CreatedAt, &artifact.OutputObjectKey,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ConversionArtifact{}, ErrConversionJobNotFound
+	}
+	return artifact, err
 }
 
 // ClaimConversionJob atomically reserves one queued job. SKIP LOCKED allows

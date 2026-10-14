@@ -45,7 +45,7 @@ if ([string]::IsNullOrWhiteSpace($adminKey) -or [string]::IsNullOrWhiteSpace($ad
 $config = @{
   identities = @(
     @{ name = 'bootstrap-admin'; credentials = @(@{ accessKey = $adminKey; secretKey = $adminSecret }); actions = @('Admin','Read','Write','List','Tagging') },
-    @{ name = 'geodata-upload'; credentials = @(@{ accessKey = $uploadKey; secretKey = $uploadSecret }); actions = @('Write','List'); resources = @('buckets/geodata-raw/') },
+    @{ name = 'geodata-upload'; credentials = @(@{ accessKey = $uploadKey; secretKey = $uploadSecret }); actions = @('Read','Write','List'); resources = @('buckets/geodata-raw/','buckets/geodata-derived/') },
     @{ name = 'geodata-worker'; credentials = @(@{ accessKey = $workerKey; secretKey = $workerSecret }); actions = @('Read','Write','List'); resources = @('buckets/geodata-raw/','buckets/geodata-derived/') }
   )
 } | ConvertTo-Json -Depth 8 -Compress

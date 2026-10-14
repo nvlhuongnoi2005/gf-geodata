@@ -5,9 +5,10 @@ import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography,
   Tooltip,
 } from "@mui/material";
-import { CheckCircle2, Clock3, Play, RefreshCw, Square, Trash2, Workflow, XCircle } from "lucide-react";
+import { CheckCircle2, Clock3, Eye, Play, RefreshCw, Square, Trash2, Workflow, XCircle } from "lucide-react";
 import { useAuth } from "../auth";
 import { useI18n, type TranslationKey } from "../i18n";
+import { ArtifactPreviewDialog } from "../components/ArtifactPreviewDialog";
 
 type RawUpload = { id: string; name: string; fileName: string; format: string; status: string };
 type ConversionJob = {
@@ -60,6 +61,7 @@ export function PipelinePage() {
   const [pendingAction, setPendingAction] = useState<JobAction | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState(false);
+  const [previewArtifactID, setPreviewArtifactID] = useState<string | null>(null);
 
   const readySources = useMemo(() => sources.filter((source) => ["uploaded", "failed", "converted"].includes(source.status)), [sources]);
   const loadData = useCallback(async () => {
@@ -149,7 +151,7 @@ export function PipelinePage() {
         <TableCell><Typography variant="body2">MBTiles</Typography><Typography variant="caption" color="text.secondary">{t("pipeline.zoomRange", { min: job.minZoom, max: job.maxZoom })}</Typography></TableCell>
         <TableCell sx={{ minWidth: 180 }}><Stack spacing={0.6}><LinearProgress variant="determinate" value={job.progress} color={job.status === "failed" ? "error" : job.status === "succeeded" ? "success" : "primary"} /><Typography variant="caption" color="text.secondary">{t(jobStepLabels[job.currentStep] ?? "pipeline.step.queued")} · {job.progress}%</Typography><Typography variant="caption" color="text.secondary">{estimateLabel(job)}</Typography></Stack></TableCell>
         <TableCell><Typography variant="caption">{formatDate(job.createdAt)}</Typography></TableCell>
-        <TableCell><Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}><Chip size="small" color={job.status === "failed" ? "error" : job.status === "succeeded" ? "success" : job.status === "running" ? "primary" : "default"} icon={job.status === "succeeded" ? <CheckCircle2 size={13} /> : job.status === "failed" ? <XCircle size={13} /> : <Clock3 size={13} />} label={t(jobStatusLabels[job.status])} />{["queued", "running"].includes(job.status) ? <Tooltip title={t("pipeline.stop")}><IconButton size="small" color="error" onClick={() => { setActionError(false); setPendingAction({ kind: "cancel", job }); }} aria-label={t("pipeline.stop")}><Square size={16} /></IconButton></Tooltip> : <Tooltip title={t("pipeline.delete")}><IconButton size="small" color="error" onClick={() => { setActionError(false); setPendingAction({ kind: "delete", job }); }} aria-label={t("pipeline.delete")}><Trash2 size={16} /></IconButton></Tooltip>}</Stack></TableCell>
+        <TableCell><Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}><Chip size="small" color={job.status === "failed" ? "error" : job.status === "succeeded" ? "success" : job.status === "running" ? "primary" : "default"} icon={job.status === "succeeded" ? <CheckCircle2 size={13} /> : job.status === "failed" ? <XCircle size={13} /> : <Clock3 size={13} />} label={t(jobStatusLabels[job.status])} />{["queued", "running"].includes(job.status) ? <Tooltip title={t("pipeline.stop")}><IconButton size="small" color="error" onClick={() => { setActionError(false); setPendingAction({ kind: "cancel", job }); }} aria-label={t("pipeline.stop")}><Square size={16} /></IconButton></Tooltip> : <>{job.status === "succeeded" && <Tooltip title={t("preview.open")}><IconButton size="small" color="primary" onClick={() => setPreviewArtifactID(job.id)} aria-label={t("preview.open")}><Eye size={17} /></IconButton></Tooltip>}<Tooltip title={t("pipeline.delete")}><IconButton size="small" color="error" onClick={() => { setActionError(false); setPendingAction({ kind: "delete", job }); }} aria-label={t("pipeline.delete")}><Trash2 size={16} /></IconButton></Tooltip></>}</Stack></TableCell>
       </TableRow>)}
     </TableBody></Table></TableContainer>
     <Dialog open={dialogOpen} onClose={() => !creating && setDialogOpen(false)} maxWidth="sm" fullWidth><DialogTitle sx={{ fontWeight: 750 }}>{t("pipeline.create")}</DialogTitle><DialogContent dividers><Stack spacing={2.5}>
@@ -160,5 +162,6 @@ export function PipelinePage() {
       {createError && <Alert severity="error">{t("pipeline.createFailed")}</Alert>}
     </Stack></DialogContent><DialogActions sx={{ p: 2 }}><Button onClick={() => setDialogOpen(false)} disabled={creating}>{t("pipeline.cancelDialog")}</Button><Button variant="contained" startIcon={<Play size={16} />} onClick={() => void createJob()} disabled={creating || !sourceID}>{t("pipeline.start")}</Button></DialogActions></Dialog>
     <Dialog open={pendingAction !== null} onClose={() => !actionBusy && setPendingAction(null)} maxWidth="xs" fullWidth><DialogTitle sx={{ fontWeight: 750 }}>{pendingAction?.kind === "cancel" ? t("pipeline.stopTitle") : t("pipeline.deleteTitle")}</DialogTitle><DialogContent dividers><Stack spacing={2}><Typography>{pendingAction?.kind === "cancel" ? t("pipeline.stopDescription", { name: pendingAction.job.sourceName }) : t("pipeline.deleteDescription", { name: pendingAction?.job.sourceName ?? "" })}</Typography>{pendingAction?.kind === "cancel" && <Alert severity="warning">{t("pipeline.stopWarning")}</Alert>}{actionError && <Alert severity="error">{t("pipeline.actionFailed")}</Alert>}</Stack></DialogContent><DialogActions sx={{ p: 2 }}><Button onClick={() => setPendingAction(null)} disabled={actionBusy}>{t("pipeline.cancelDialog")}</Button><Button color="error" variant="contained" onClick={() => void performAction()} disabled={actionBusy}>{pendingAction?.kind === "cancel" ? t("pipeline.stop") : t("pipeline.delete")}</Button></DialogActions></Dialog>
+    <ArtifactPreviewDialog artifactID={previewArtifactID} accessToken={accessToken} onClose={() => setPreviewArtifactID(null)} />
   </Stack>;
 }
