@@ -40,21 +40,38 @@ $config = @{
   )
 } | ConvertTo-Json -Depth 8 -Compress
 
-$config | kubectl -n storage create secret generic geodata-seaweed-s3-config --from-literal="s3.json=$config" --dry-run=client -o yaml | kubectl apply -f -
+$s3ConfigFile = New-TemporaryFile
+try {
+  [System.IO.File]::WriteAllText($s3ConfigFile.FullName, $config, (New-Object System.Text.UTF8Encoding($false)))
+  kubectl -n storage create secret generic geodata-seaweed-s3-config --from-file="s3.json=$($s3ConfigFile.FullName)" --dry-run=client -o yaml | kubectl apply -f -
+} finally {
+  Remove-Item -LiteralPath $s3ConfigFile.FullName -Force
+}
 kubectl -n storage create secret generic geodata-s3-bootstrap --from-literal="access-key=$adminKey" --from-literal="secret-key=$adminSecret" --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n tile-server create secret generic geodata-upload-s3 --from-literal="access-key=$uploadKey" --from-literal="secret-key=$uploadSecret" --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-Create the auth Secret using the actual values configured by WebGIS. Do not
-guess the JWKS path or issuer; obtain them from the identity service/token
-configuration. The upload API expects a signed JWT with matching `iss`, `aud`,
-expiration and an admin claim (`role: admin`, `roles` containing `admin`, or
-`scope` containing `geodata:admin`).
+The existing `gf-webgis` controller is the identity authority. Its JWTs are
+signed with EdDSA and expose JWKS at `/auth/.well-known/jwks.json`. The upload
+API validates the same `iss`, `aud`, expiration and admin role claim as WebGIS;
+it does not create or manage a second login system.
+
+Confirm the live config values without reading any private key:
 
 ```powershell
-$jwksUrl = '<actual WebGIS JWKS URL>'
-$issuer = '<exact JWT iss>'
-$audience = '<exact JWT aud>'
+$webgisConfig = kubectl -n webgis get configmap webgis-config -o json | ConvertFrom-Json
+$webgisConfig.data.AUTH_JWT_ISSUER
+$webgisConfig.data.AUTH_JWT_AUDIENCE
+kubectl -n webgis get service controller
+```
+
+For the current `gf-webgis` deployment, use its in-cluster Service address and
+the values configured in `webgis-config`:
+
+```powershell
+$jwksUrl = 'http://controller.webgis.svc.cluster.local:3001/auth/.well-known/jwks.json'
+$issuer = 'auth-service'
+$audience = 'api-gateway'
 kubectl -n tile-server create secret generic geodata-upload-auth --from-literal="jwks-url=$jwksUrl" --from-literal="issuer=$issuer" --from-literal="audience=$audience" --dry-run=client -o yaml | kubectl apply -f -
 ```
 

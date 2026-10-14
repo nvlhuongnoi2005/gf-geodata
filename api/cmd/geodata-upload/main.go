@@ -118,7 +118,7 @@ func (s *server) requireAdmin(next http.Handler) http.Handler {
 		}
 		claims := jwt.MapClaims{}
 		token, err := jwt.ParseWithClaims(strings.TrimPrefix(header, "Bearer "), claims, s.keys.Keyfunc,
-			jwt.WithValidMethods([]string{"RS256", "ES256"}), jwt.WithIssuer(s.issuer), jwt.WithAudience(s.audience), jwt.WithExpirationRequired())
+			jwt.WithValidMethods([]string{jwt.SigningMethodEdDSA.Alg()}), jwt.WithIssuer(s.issuer), jwt.WithAudience(s.audience), jwt.WithExpirationRequired())
 		if err != nil || token == nil || !token.Valid {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
