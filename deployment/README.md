@@ -36,7 +36,7 @@ $uploadSecret = [Convert]::ToBase64String($uploadSecretBytes)
 $config = @{
   identities = @(
     @{ name = 'bootstrap-admin'; credentials = @(@{ accessKey = $adminKey; secretKey = $adminSecret }); actions = @('Admin','Read','Write','List','Tagging') },
-    @{ name = 'geodata-upload'; credentials = @(@{ accessKey = $uploadKey; secretKey = $uploadSecret }); actions = @('Write:geodata-raw','List:geodata-raw') }
+    @{ name = 'geodata-upload'; credentials = @(@{ accessKey = $uploadKey; secretKey = $uploadSecret }); actions = @('Write','List'); resources = @('buckets/geodata-raw/') }
   )
 } | ConvertTo-Json -Depth 8 -Compress
 
@@ -49,6 +49,18 @@ try {
 }
 kubectl -n storage create secret generic geodata-s3-bootstrap --from-literal="access-key=$adminKey" --from-literal="secret-key=$adminSecret" --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n tile-server create secret generic geodata-upload-s3 --from-literal="access-key=$uploadKey" --from-literal="secret-key=$uploadSecret" --dry-run=client -o yaml | kubectl apply -f -
+```
+
+If either S3 credential Secret was accidentally created with blank values,
+rerun the complete block above. It safely rotates both identities together;
+then restart SeaweedFS and recreate the bootstrap Job:
+
+```powershell
+kubectl -n storage rollout restart statefulset/seaweedfs
+kubectl -n storage rollout status statefulset/seaweedfs --timeout=10m
+kubectl -n storage delete job geodata-bucket-bootstrap --ignore-not-found
+kubectl apply -k deployment/storage
+kubectl -n storage wait --for=condition=complete job/geodata-bucket-bootstrap --timeout=5m
 ```
 
 The existing `gf-webgis` controller is the identity authority. Its JWTs are
