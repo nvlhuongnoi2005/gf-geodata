@@ -30,13 +30,13 @@ function previewStyle(tileJSONURL: string, tileJSON: TileJSON): StyleSpecificati
 
 export function ArtifactPreviewDialog({ artifactID, accessToken, onClose }: { artifactID: string | null; accessToken: string | null; onClose: () => void }) {
   const { t } = useI18n();
-  const mapNode = useRef<HTMLDivElement | null>(null);
+  const [mapNode, setMapNode] = useState<HTMLDivElement | null>(null);
   const map = useRef<Map | null>(null);
   const [error, setError] = useState(false);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (!artifactID || !accessToken || !mapNode.current) return;
+    if (!artifactID || !accessToken || !mapNode) return;
     let disposed = false;
     setError(false); setReady(false);
     const tileJSONURL = `/api/geodata/v1/artifacts/${artifactID}/tilejson`;
@@ -45,9 +45,9 @@ export function ArtifactPreviewDialog({ artifactID, accessToken, onClose }: { ar
         const response = await fetch(tileJSONURL, { headers: { Authorization: `Bearer ${accessToken}` } });
         if (!response.ok) throw new Error("preview unavailable");
         const tileJSON = await response.json() as TileJSON;
-        if (disposed || !mapNode.current) return;
+        if (disposed) return;
         const instance = new Map({
-          container: mapNode.current,
+          container: mapNode,
           style: previewStyle(tileJSONURL, tileJSON),
           bounds: tileJSON.bounds,
           fitBoundsOptions: { padding: 44, maxZoom: Math.min(tileJSON.maxzoom, 14) },
@@ -71,12 +71,12 @@ export function ArtifactPreviewDialog({ artifactID, accessToken, onClose }: { ar
       }
     })();
     return () => { disposed = true; map.current?.remove(); map.current = null; };
-  }, [artifactID, accessToken]);
+  }, [artifactID, accessToken, mapNode]);
 
   return <Dialog open={Boolean(artifactID)} onClose={onClose} maxWidth="xl" fullWidth slotProps={{ paper: { sx: { height: "min(82vh, 760px)" } } }}>
     <DialogTitle sx={{ fontWeight: 750, pr: 7 }}>{t("preview.title")}<IconButton onClick={onClose} sx={{ position: "absolute", right: 12, top: 10 }} aria-label={t("common.close")}><X size={18} /></IconButton></DialogTitle>
     <DialogContent dividers sx={{ p: 0, position: "relative" }}>
-      <Box ref={mapNode} sx={{ position: "absolute", inset: 0 }} />
+      <Box ref={setMapNode} sx={{ position: "absolute", inset: 0 }} />
       {!ready && !error && <Stack sx={{ position: "absolute", inset: 0, alignItems: "center", justifyContent: "center", bgcolor: "background.paper" }} spacing={1}><CircularProgress size={28} /><Typography variant="body2" color="text.secondary">{t("preview.loading")}</Typography></Stack>}
       {error && <Alert severity="error" sx={{ m: 2 }}>{t("preview.failed")}</Alert>}
     </DialogContent>
