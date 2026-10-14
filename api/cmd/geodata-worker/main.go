@@ -1,0 +1,251 @@
+// geodata-worker claims conversion work from the catalog. It is deliberately
+// separate from the browser-facing upload API: S3 object keys and credentials
+// stay inside the cluster, and a crash leaves an auditable failed job.
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"log/slog"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/catalog"
+	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/tiling"
+)
+
+type worker struct {
+	store         *catalog.Store
+	objectStore   *s3.Client
+	downloader    *manager.Downloader
+	uploader      *manager.Uploader
+	rawBucket     string
+	derivedBucket string
+	workspaceRoot string
+	converter     *tiling.Converter
+}
+
+func required(name string) string {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		log.Fatalf("required environment variable %s is not set", name)
+	}
+	return value
+}
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	store := openCatalog(ctx)
+	defer store.Close()
+	app := &worker{store: store, rawBucket: required("S3_RAW_BUCKET"), derivedBucket: required("S3_DERIVED_BUCKET"), workspaceRoot: environmentOr("WORKSPACE_ROOT", "/work")}
+	app.objectStore = openS3(ctx)
+	app.downloader = manager.NewDownloader(app.objectStore, func(d *manager.Downloader) { d.Concurrency = 2; d.PartSize = 64 * 1024 * 1024 })
+	app.uploader = manager.NewUploader(app.objectStore, func(u *manager.Uploader) { u.Concurrency = 2; u.PartSize = 64 * 1024 * 1024 })
+	app.converter = tiling.New(tiling.Tools{
+		Tilemaker:        environmentOr("TILEMAKER_BIN", "/usr/src/app/tilemaker"),
+		Ogr2Ogr:          environmentOr("OGR2OGR_BIN", "ogr2ogr"),
+		GdalTranslate:    environmentOr("GDAL_TRANSLATE_BIN", "gdal_translate"),
+		OSMConfigPath:    environmentOr("TILEMAKER_CONFIG_PATH", "/usr/src/app/resources/config-openmaptiles.json"),
+		OSMProcessPath:   environmentOr("TILEMAKER_PROCESS_PATH", "/usr/src/app/resources/process-openmaptiles.lua"),
+		RasterTileFormat: environmentOr("RASTER_TILE_FORMAT", "PNG"),
+	})
+
+	pollEvery := durationOr("JOB_POLL_INTERVAL", 5*time.Second)
+	slog.Info("geodata conversion worker started", "poll_interval", pollEvery.String())
+	for {
+		if !app.processOne(ctx) {
+			select {
+			case <-ctx.Done():
+				slog.Info("geodata conversion worker stopped")
+				return
+			case <-time.After(pollEvery):
+			}
+		}
+	}
+}
+
+func openCatalog(ctx context.Context) *catalog.Store {
+	cfg := catalog.Config{
+		Host: required("POSTGRES_HOST"), Port: os.Getenv("POSTGRES_PORT"), Database: required("POSTGRES_DATABASE"),
+		User: required("POSTGRES_USER"), Password: required("POSTGRES_PASSWORD"), SSLMode: os.Getenv("POSTGRES_SSLMODE"),
+	}
+	deadline := time.Now().Add(75 * time.Second)
+	for {
+		attemptCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		store, err := catalog.Open(attemptCtx, cfg)
+		if err == nil {
+			err = store.Migrate(attemptCtx)
+		}
+		cancel()
+		if err == nil {
+			return store
+		}
+		if store != nil {
+			store.Close()
+		}
+		if time.Now().After(deadline) {
+			log.Fatalf("connect or migrate geodata catalog: %v", err)
+		}
+		slog.Warn("geodata catalog is not ready; retrying", "error", err)
+		select {
+		case <-ctx.Done():
+			log.Fatal("worker stopped before catalog became ready")
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+func openS3(ctx context.Context) *s3.Client {
+	region := environmentOr("S3_REGION", "us-east-1")
+	accessKey, secretKey := required("S3_ACCESS_KEY"), required("S3_SECRET_KEY")
+	base, err := awsconfig.LoadDefaultConfig(ctx,
+		awsconfig.WithRegion(region),
+		awsconfig.WithCredentialsProvider(aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+			return aws.Credentials{AccessKeyID: accessKey, SecretAccessKey: secretKey, Source: "geodata-worker-secret"}, nil
+		})),
+	)
+	if err != nil {
+		log.Fatalf("configure S3 client: %v", err)
+	}
+	return s3.NewFromConfig(base, func(options *s3.Options) {
+		options.BaseEndpoint = aws.String(required("S3_ENDPOINT"))
+		options.UsePathStyle = true
+	})
+}
+
+func (w *worker) processOne(parent context.Context) bool {
+	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
+	job, err := w.store.ClaimConversionJob(ctx)
+	cancel()
+	if err != nil {
+		slog.Error("claim conversion job", "error", err)
+		return false
+	}
+	if job == nil {
+		return false
+	}
+
+	slog.Info("processing conversion job", "job_id", job.ID, "format", job.SourceFormat)
+	if err := w.runJob(parent, job); err != nil {
+		slog.Error("conversion job failed", "job_id", job.ID, "error", err)
+		failCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		if failErr := w.store.FailConversionJob(failCtx, job.ID, err.Error()); failErr != nil {
+			slog.Error("mark conversion job failed", "job_id", job.ID, "error", failErr)
+		}
+		cancel()
+		return true
+	}
+	slog.Info("conversion job completed", "job_id", job.ID)
+	return true
+}
+
+func (w *worker) runJob(ctx context.Context, job *catalog.ConversionJob) error {
+	workspace, err := os.MkdirTemp(w.workspaceRoot, "job-"+job.ID+"-")
+	if err != nil {
+		return fmt.Errorf("create workspace: %w", err)
+	}
+	defer os.RemoveAll(workspace)
+
+	sourcePath := filepath.Join(workspace, "source"+sourceExtension(job.SourceFormat))
+	if err := w.download(ctx, job.RawObjectKey, sourcePath); err != nil {
+		return err
+	}
+	outputPath := filepath.Join(workspace, "output.mbtiles")
+	if err := w.converter.Convert(ctx, tiling.Request{
+		SourcePath: sourcePath, SourceType: job.SourceFormat, OutputPath: outputPath, Workspace: workspace,
+		MinZoom: job.MinZoom, MaxZoom: job.MaxZoom, LayerName: job.LayerName,
+	}); err != nil {
+		return fmt.Errorf("convert source: %w", err)
+	}
+	objectKey := fmt.Sprintf("mbtiles/%s/%s.mbtiles", job.RawUploadID, job.ID)
+	if err := w.upload(ctx, objectKey, outputPath); err != nil {
+		return err
+	}
+	completeCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	if err := w.store.CompleteConversionJob(completeCtx, job.ID, objectKey); err != nil {
+		return fmt.Errorf("record completed conversion: %w", err)
+	}
+	return nil
+}
+
+func (w *worker) download(ctx context.Context, objectKey, destination string) error {
+	file, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("open local source: %w", err)
+	}
+	_, downloadErr := w.downloader.Download(ctx, file, &s3.GetObjectInput{Bucket: aws.String(w.rawBucket), Key: aws.String(objectKey)})
+	closeErr := file.Close()
+	if downloadErr != nil {
+		return fmt.Errorf("download raw source: %w", downloadErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close downloaded source: %w", closeErr)
+	}
+	return nil
+}
+
+func (w *worker) upload(ctx context.Context, objectKey, sourcePath string) error {
+	file, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("open converted artifact: %w", err)
+	}
+	defer file.Close()
+	_, err = w.uploader.Upload(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(w.derivedBucket), Key: aws.String(objectKey), Body: file,
+		ContentType: aws.String("application/x-sqlite3"),
+		Metadata:    map[string]string{"format": "mbtiles"},
+	})
+	if err != nil {
+		return fmt.Errorf("upload converted artifact: %w", err)
+	}
+	return nil
+}
+
+func sourceExtension(format string) string {
+	switch format {
+	case tiling.FormatOSMPBF:
+		return ".osm.pbf"
+	case tiling.FormatGeoTIFF:
+		return ".tif"
+	case tiling.FormatGeoPackage:
+		return ".gpkg"
+	case tiling.FormatShapefileZip:
+		return ".zip"
+	case tiling.FormatMBTiles:
+		return ".mbtiles"
+	default:
+		return ".bin"
+	}
+}
+
+func environmentOr(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func durationOr(name string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed <= 0 {
+		log.Printf("invalid %s=%q; using %s", name, value, fallback)
+		return fallback
+	}
+	return parsed
+}

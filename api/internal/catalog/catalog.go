@@ -2,8 +2,10 @@ package catalog
 
 import (
 	"context"
-	_ "embed"
+	"embed"
 	"errors"
+	"fmt"
+	"io/fs"
 	"net"
 	"net/url"
 	"strings"
@@ -13,8 +15,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-//go:embed migrations/001_raw_uploads.sql
-var initialMigration string
+//go:embed migrations/*.sql
+var migrations embed.FS
 
 var dataTypes = map[string]struct{}{
 	"street": {}, "satellite": {}, "administrative": {}, "topographic": {},
@@ -43,6 +45,31 @@ type RawUpload struct {
 	SHA256    string    `json:"sha256"`
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+// ConversionJob is an internal work item. RawObjectKey is intentionally not
+// exposed through the HTTP API; only the worker needs it to read from S3.
+type ConversionJob struct {
+	ID              string
+	RawUploadID     string
+	SourceFileName  string
+	SourceFormat    string
+	RawObjectKey    string
+	Status          string
+	MinZoom         int
+	MaxZoom         int
+	LayerName       string
+	OutputObjectKey string
+	FailureMessage  string
+	CreatedAt       time.Time
+	StartedAt       *time.Time
+	FinishedAt      *time.Time
+}
+
+type JobCounts struct {
+	Queued  int
+	Running int
+	Failed  int
 }
 
 type NewRawUpload struct {
@@ -82,8 +109,20 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 func (s *Store) Close() { s.pool.Close() }
 
 func (s *Store) Migrate(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, initialMigration)
-	return err
+	paths, err := fs.Glob(migrations, "migrations/*.sql")
+	if err != nil {
+		return fmt.Errorf("find catalog migrations: %w", err)
+	}
+	for _, path := range paths {
+		body, err := migrations.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read catalog migration %s: %w", path, err)
+		}
+		if _, err := s.pool.Exec(ctx, string(body)); err != nil {
+			return fmt.Errorf("apply catalog migration %s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) Health(ctx context.Context) error {
@@ -94,6 +133,17 @@ func (s *Store) CountRawUploads(ctx context.Context) (int, error) {
 	var count int
 	err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM raw_uploads").Scan(&count)
 	return count, err
+}
+
+func (s *Store) JobCounts(ctx context.Context) (JobCounts, error) {
+	var counts JobCounts
+	err := s.pool.QueryRow(ctx, `
+SELECT
+  COUNT(*) FILTER (WHERE status = 'queued'),
+  COUNT(*) FILTER (WHERE status = 'running'),
+  COUNT(*) FILTER (WHERE status = 'failed')
+FROM conversion_jobs`).Scan(&counts.Queued, &counts.Running, &counts.Failed)
+	return counts, err
 }
 
 func IsDataType(value string) bool {
@@ -167,4 +217,103 @@ func (s *Store) RawObjectKey(ctx context.Context, id string) (string, error) {
 func (s *Store) Delete(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, "DELETE FROM raw_uploads WHERE id = $1", id)
 	return err
+}
+
+func (s *Store) CreateConversionJob(ctx context.Context, id, rawUploadID string, minZoom, maxZoom int, layerName string) (ConversionJob, error) {
+	var job ConversionJob
+	err := s.pool.QueryRow(ctx, `
+INSERT INTO conversion_jobs (id, raw_upload_id, min_zoom, max_zoom, layer_name)
+SELECT $1, id, $3, $4, NULLIF($5, '')
+FROM raw_uploads
+WHERE id = $2 AND status IN ('uploaded', 'failed', 'converted')
+RETURNING id, raw_upload_id, status, min_zoom, max_zoom, COALESCE(layer_name, ''), created_at`,
+		id, rawUploadID, minZoom, maxZoom, layerName,
+	).Scan(&job.ID, &job.RawUploadID, &job.Status, &job.MinZoom, &job.MaxZoom, &job.LayerName, &job.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ConversionJob{}, ErrRawUploadNotFound
+	}
+	return job, err
+}
+
+// ClaimConversionJob atomically reserves one queued job. SKIP LOCKED allows
+// future replicas to process separate jobs without double conversion.
+func (s *Store) ClaimConversionJob(ctx context.Context) (*ConversionJob, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	job := &ConversionJob{}
+	err = tx.QueryRow(ctx, `
+SELECT j.id, j.raw_upload_id, r.source_file_name, r.source_format, r.raw_object_key,
+       j.status, j.min_zoom, j.max_zoom, COALESCE(j.layer_name, ''), j.created_at
+FROM conversion_jobs j
+JOIN raw_uploads r ON r.id = j.raw_upload_id
+WHERE j.status = 'queued'
+ORDER BY j.created_at
+FOR UPDATE OF j SKIP LOCKED
+LIMIT 1`).Scan(
+		&job.ID, &job.RawUploadID, &job.SourceFileName, &job.SourceFormat, &job.RawObjectKey,
+		&job.Status, &job.MinZoom, &job.MaxZoom, &job.LayerName, &job.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, tx.Commit(ctx)
+	}
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	if _, err := tx.Exec(ctx, `UPDATE conversion_jobs SET status = 'running', started_at = $2 WHERE id = $1`, job.ID, now); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE raw_uploads SET status = 'converting' WHERE id = $1`, job.RawUploadID); err != nil {
+		return nil, err
+	}
+	job.Status, job.StartedAt = "running", &now
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+func (s *Store) CompleteConversionJob(ctx context.Context, jobID, outputObjectKey string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var rawUploadID string
+	err = tx.QueryRow(ctx, `
+UPDATE conversion_jobs
+SET status = 'succeeded', output_object_key = $2, finished_at = NOW(), failure_message = NULL
+WHERE id = $1 AND status = 'running'
+RETURNING raw_upload_id`, jobID, outputObjectKey).Scan(&rawUploadID)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE raw_uploads SET status = 'converted' WHERE id = $1`, rawUploadID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) FailConversionJob(ctx context.Context, jobID, message string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var rawUploadID string
+	err = tx.QueryRow(ctx, `
+UPDATE conversion_jobs
+SET status = 'failed', failure_message = LEFT($2, 4000), finished_at = NOW()
+WHERE id = $1 AND status = 'running'
+RETURNING raw_upload_id`, jobID, message).Scan(&rawUploadID)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE raw_uploads SET status = 'failed' WHERE id = $1`, rawUploadID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

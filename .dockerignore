@@ -6,5 +6,7 @@ fe/dist
 .env
 .env.*
 *.tsbuildinfo
+api/.gocache
+api/.gomodcache
 deployment/storage/seaweedfs-s3-config.yaml
 deployment/storage/s3-bootstrap-credentials.yaml

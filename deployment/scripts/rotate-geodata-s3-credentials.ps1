@@ -22,11 +22,15 @@ $geodataAdminKey = [BitConverter]::ToString((New-GeodataRandomBytes 10)).Replace
 $geodataAdminSecret = [Convert]::ToBase64String((New-GeodataRandomBytes 32))
 $geodataUploadKey = [BitConverter]::ToString((New-GeodataRandomBytes 10)).Replace('-', '')
 $geodataUploadSecret = [Convert]::ToBase64String((New-GeodataRandomBytes 32))
+$geodataWorkerKey = [BitConverter]::ToString((New-GeodataRandomBytes 10)).Replace('-', '')
+$geodataWorkerSecret = [Convert]::ToBase64String((New-GeodataRandomBytes 32))
 
 Assert-GeodataValue 'Admin access key' $geodataAdminKey
 Assert-GeodataValue 'Admin secret key' $geodataAdminSecret
 Assert-GeodataValue 'Upload access key' $geodataUploadKey
 Assert-GeodataValue 'Upload secret key' $geodataUploadSecret
+Assert-GeodataValue 'Worker access key' $geodataWorkerKey
+Assert-GeodataValue 'Worker secret key' $geodataWorkerSecret
 
 $geodataS3Config = @{
   identities = @(
@@ -40,6 +44,12 @@ $geodataS3Config = @{
       credentials = @(@{ accessKey = $geodataUploadKey; secretKey = $geodataUploadSecret })
       actions = @('Write', 'List')
       resources = @('buckets/geodata-raw/')
+    }
+    @{
+      name = 'geodata-worker'
+      credentials = @(@{ accessKey = $geodataWorkerKey; secretKey = $geodataWorkerSecret })
+      actions = @('Read', 'Write', 'List')
+      resources = @('buckets/geodata-raw/', 'buckets/geodata-derived/')
     }
   )
 } | ConvertTo-Json -Depth 8 -Compress
@@ -58,6 +68,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Failed to apply bootstrap S3 credentials Secre
 
 kubectl -n tile-server create secret generic geodata-upload-s3 --from-literal="access-key=$geodataUploadKey" --from-literal="secret-key=$geodataUploadSecret" --dry-run=client -o yaml | kubectl apply -f -
 if ($LASTEXITCODE -ne 0) { throw 'Failed to apply upload S3 credentials Secret.' }
+kubectl -n tile-server create secret generic geodata-worker-s3 --from-literal="access-key=$geodataWorkerKey" --from-literal="secret-key=$geodataWorkerSecret" --dry-run=client -o yaml | kubectl apply -f -
+if ($LASTEXITCODE -ne 0) { throw 'Failed to apply worker S3 credentials Secret.' }
 
 $geodataBootstrapSecret = kubectl -n storage get secret geodata-s3-bootstrap -o json | ConvertFrom-Json
 $geodataBootstrapAccessKey = $geodataBootstrapSecret.data.'access-key'

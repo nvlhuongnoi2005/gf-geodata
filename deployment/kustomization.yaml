@@ -5,4 +5,5 @@ resources:
   - database
   - frontend
   - upload-api
+  - worker
   - storage

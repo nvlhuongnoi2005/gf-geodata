@@ -22,10 +22,14 @@ try {
   $adminSecretBytes = New-Object byte[] 32
   $uploadKeyBytes = New-Object byte[] 10
   $uploadSecretBytes = New-Object byte[] 32
+  $workerKeyBytes = New-Object byte[] 10
+  $workerSecretBytes = New-Object byte[] 32
   $rng.GetBytes($adminKeyBytes)
   $rng.GetBytes($adminSecretBytes)
   $rng.GetBytes($uploadKeyBytes)
   $rng.GetBytes($uploadSecretBytes)
+  $rng.GetBytes($workerKeyBytes)
+  $rng.GetBytes($workerSecretBytes)
 } finally {
   $rng.Dispose()
 }
@@ -33,13 +37,16 @@ $adminKey = [BitConverter]::ToString($adminKeyBytes).Replace('-', '')
 $adminSecret = [Convert]::ToBase64String($adminSecretBytes)
 $uploadKey = [BitConverter]::ToString($uploadKeyBytes).Replace('-', '')
 $uploadSecret = [Convert]::ToBase64String($uploadSecretBytes)
-if ([string]::IsNullOrWhiteSpace($adminKey) -or [string]::IsNullOrWhiteSpace($adminSecret) -or [string]::IsNullOrWhiteSpace($uploadKey) -or [string]::IsNullOrWhiteSpace($uploadSecret)) {
+$workerKey = [BitConverter]::ToString($workerKeyBytes).Replace('-', '')
+$workerSecret = [Convert]::ToBase64String($workerSecretBytes)
+if ([string]::IsNullOrWhiteSpace($adminKey) -or [string]::IsNullOrWhiteSpace($adminSecret) -or [string]::IsNullOrWhiteSpace($uploadKey) -or [string]::IsNullOrWhiteSpace($uploadSecret) -or [string]::IsNullOrWhiteSpace($workerKey) -or [string]::IsNullOrWhiteSpace($workerSecret)) {
   throw 'Generated S3 credential is empty; no Secret was created.'
 }
 $config = @{
   identities = @(
     @{ name = 'bootstrap-admin'; credentials = @(@{ accessKey = $adminKey; secretKey = $adminSecret }); actions = @('Admin','Read','Write','List','Tagging') },
-    @{ name = 'geodata-upload'; credentials = @(@{ accessKey = $uploadKey; secretKey = $uploadSecret }); actions = @('Write','List'); resources = @('buckets/geodata-raw/') }
+    @{ name = 'geodata-upload'; credentials = @(@{ accessKey = $uploadKey; secretKey = $uploadSecret }); actions = @('Write','List'); resources = @('buckets/geodata-raw/') },
+    @{ name = 'geodata-worker'; credentials = @(@{ accessKey = $workerKey; secretKey = $workerSecret }); actions = @('Read','Write','List'); resources = @('buckets/geodata-raw/','buckets/geodata-derived/') }
   )
 } | ConvertTo-Json -Depth 8 -Compress
 
@@ -52,6 +59,7 @@ try {
 }
 kubectl -n storage create secret generic geodata-s3-bootstrap --from-literal="access-key=$adminKey" --from-literal="secret-key=$adminSecret" --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n tile-server create secret generic geodata-upload-s3 --from-literal="access-key=$uploadKey" --from-literal="secret-key=$uploadSecret" --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n tile-server create secret generic geodata-worker-s3 --from-literal="access-key=$workerKey" --from-literal="secret-key=$workerSecret" --dry-run=client -o yaml | kubectl apply -f -
 
 $bootstrapSecret = kubectl -n storage get secret geodata-s3-bootstrap -o json | ConvertFrom-Json
 if ($bootstrapSecret.data.'access-key'.Length -eq 0 -or $bootstrapSecret.data.'secret-key'.Length -eq 0) {
@@ -59,8 +67,8 @@ if ($bootstrapSecret.data.'access-key'.Length -eq 0 -or $bootstrapSecret.data.'s
 }
 ```
 
-If either S3 credential Secret was accidentally created with blank values, use
-the checked script below. It safely rotates both identities together and stops
+If an S3 credential Secret was accidentally created with blank values, use
+the checked script below. It safely rotates all application identities together and stops
 if the bootstrap Secret is empty; it never prints credential values. Then
 restart SeaweedFS and recreate the bootstrap Job:
 
@@ -122,7 +130,8 @@ two services.
 The storage manifests create a single-node SeaweedFS installation with a 100Gi
 PVC, three private buckets (`geodata-raw`, `geodata-derived`, and
 `geodata-published`), and raw-bucket versioning. The uploader identity is scoped
-to `geodata-raw`; admin credentials are only used by the one-shot bucket job.
+to `geodata-raw`; the conversion worker may read that bucket and write only to
+`geodata-derived`; admin credentials are only used by the one-shot bucket job.
 The S3 gRPC listener is intentionally not exposed by a Service and the storage
 NetworkPolicy only permits S3 HTTP from the upload API and bucket bootstrap Job.
 Ensure the cluster CNI enforces Kubernetes NetworkPolicy before applying.
@@ -132,13 +141,15 @@ kubectl apply -k deployment
 kubectl -n storage rollout status statefulset/seaweedfs --timeout=10m
 kubectl -n storage wait --for=condition=complete job/geodata-bucket-bootstrap --timeout=5m
 kubectl -n tile-server rollout restart deployment/geodata-upload
+kubectl -n tile-server rollout restart deployment/geodata-worker
 kubectl -n tile-server rollout restart deployment/geodata-frontend
 kubectl -n tile-server rollout status deployment/geodata-upload --timeout=5m
+kubectl -n tile-server rollout status deployment/geodata-worker --timeout=5m
 kubectl -n tile-server rollout status deployment/geodata-frontend --timeout=5m
 ```
 
 Set your GHCR `ghcr-pull` Secret in `tile-server` before rollout. GitHub Actions
-publishes `geodata-upload:dev` when `api/**` changes. The upload API enforces a
+publishes `geodata-upload:dev` and `geodata-worker:dev` when `api/**` changes. The upload API enforces a
 50 GiB maximum, streams files without buffering them on the frontend, and
 supports `.osm.pbf`, GeoTIFF, GeoPackage, Shapefile ZIP, and MBTiles. Raw object
 keys are generated server-side and never returned to the browser.
@@ -154,4 +165,23 @@ Files uploaded before this catalog was introduced have no user-selected name or
 data type, so they are intentionally not inferred from S3 and do not appear in
 the catalog. Upload those files again, or add them through a future controlled
 import workflow that explicitly supplies their metadata.
+
+## Convert an OSM PBF with Tilemaker's default schema
+
+The worker uses Tilemaker's built-in OpenMapTiles-compatible
+`config-openmaptiles.json` and `process-openmaptiles.lua`; no custom styling or
+schema is applied. Queue a conversion via the authenticated API after uploading
+the source. `rawUploadId` is the identifier shown by the source-data API, not an
+S3 key.
+
+```powershell
+$body = @{ rawUploadId = '<source-data-id>'; minZoom = 0; maxZoom = 14 } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri 'http://geodata.localhost/api/geodata/v1/jobs' -Headers @{ Authorization = "Bearer $token" } -ContentType 'application/json' -Body $body
+```
+
+The worker downloads the source into a short-lived `emptyDir`, writes a private
+MBTiles artifact to `geodata-derived`, and records only its internal object key
+in the catalog. It uses up to 8 GiB RAM and up to 50 GiB node-local temporary
+space, so increase those limits before processing a country-scale PBF if the
+node cannot accommodate it.
 

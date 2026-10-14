@@ -1,0 +1,24 @@
+ARG GO_IMAGE=golang:1.25-bookworm
+FROM ${GO_IMAGE} AS build
+WORKDIR /src
+COPY api/go.mod api/go.sum ./api/
+WORKDIR /src/api
+RUN go mod download
+WORKDIR /src
+COPY api ./api
+WORKDIR /src/api
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/geodata-worker ./cmd/geodata-worker
+
+# Tilemaker's official image ships the OpenMapTiles-compatible default schema
+# under /usr/src/app/resources. GDAL supplies the converter paths for the
+# non-OSM source formats already supported by internal/tiling.
+FROM ghcr.io/systemed/tilemaker:master
+USER root
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gdal-bin ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --create-home --home-dir /work geodata
+COPY --from=build /out/geodata-worker /usr/local/bin/geodata-worker
+USER 10001
+WORKDIR /work
+ENTRYPOINT ["/usr/local/bin/geodata-worker"]

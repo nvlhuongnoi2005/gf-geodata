@@ -13,6 +13,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: geodata-upload
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-worker
       ports:
         - protocol: TCP
           port: 5432

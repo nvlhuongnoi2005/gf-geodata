@@ -31,6 +31,23 @@ type uploadListResponse struct {
 	Items []catalog.RawUpload `json:"items"`
 }
 
+type createConversionJobRequest struct {
+	RawUploadID string `json:"rawUploadId"`
+	MinZoom     int    `json:"minZoom"`
+	MaxZoom     int    `json:"maxZoom"`
+	LayerName   string `json:"layerName"`
+}
+
+type conversionJobResponse struct {
+	ID          string    `json:"id"`
+	RawUploadID string    `json:"rawUploadId"`
+	Status      string    `json:"status"`
+	MinZoom     int       `json:"minZoom"`
+	MaxZoom     int       `json:"maxZoom"`
+	LayerName   string    `json:"layerName,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
 type serviceState string
 
 const (
@@ -126,6 +143,7 @@ func main() {
 	mux.Handle("GET /api/geodata/v1/uploads", app.requireAdmin(http.HandlerFunc(app.listUploads)))
 	mux.Handle("PUT /api/geodata/v1/uploads", app.requireAdmin(http.HandlerFunc(app.upload)))
 	mux.Handle("DELETE /api/geodata/v1/uploads/{uploadID}", app.requireAdmin(http.HandlerFunc(app.deleteUpload)))
+	mux.Handle("POST /api/geodata/v1/jobs", app.requireAdmin(http.HandlerFunc(app.createConversionJob)))
 	address := os.Getenv("HTTP_ADDR")
 	if address == "" {
 		address = ":8090"
@@ -249,7 +267,7 @@ func (s *server) summary(w http.ResponseWriter, r *http.Request) {
 	response.Services = []serviceSummary{
 		{Name: "authentication", State: s.checkHTTPService(r.Context(), s.authJWKSURL)},
 		{Name: "storage", State: s.checkStorage(r.Context())},
-		{Name: "catalog", State: s.checkCatalog(r.Context(), &response.Datasets)},
+		{Name: "catalog", State: s.checkCatalog(r.Context(), &response)},
 		{Name: "tiles", State: s.checkOptionalHTTPService(r.Context(), s.tileGatewayHealthURL)},
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -295,7 +313,7 @@ func (s *server) checkStorage(parent context.Context) serviceState {
 	return serviceReady
 }
 
-func (s *server) checkCatalog(parent context.Context, datasets *int) serviceState {
+func (s *server) checkCatalog(parent context.Context, response *summaryResponse) serviceState {
 	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 	defer cancel()
 	if err := s.store.Health(ctx); err != nil {
@@ -307,7 +325,15 @@ func (s *server) checkCatalog(parent context.Context, datasets *int) serviceStat
 		slog.Warn("catalog count failed", "error", err)
 		return serviceDegraded
 	}
-	*datasets = count
+	response.Datasets = count
+	jobs, err := s.store.JobCounts(ctx)
+	if err != nil {
+		slog.Warn("catalog job count failed", "error", err)
+		return serviceDegraded
+	}
+	response.Jobs.Queued = jobs.Queued
+	response.Jobs.Running = jobs.Running
+	response.Jobs.Failed = jobs.Failed
 	return serviceReady
 }
 
@@ -344,17 +370,16 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.maxUploadBytes)
-	idBytes := make([]byte, 16)
-	if _, err := rand.Read(idBytes); err != nil {
+	id, err := newUUID()
+	if err != nil {
 		http.Error(w, "could not start upload", http.StatusInternalServerError)
 		return
 	}
-	id := fmt.Sprintf("%s-%s-%s-%s-%s", hex.EncodeToString(idBytes[:4]), hex.EncodeToString(idBytes[4:6]), hex.EncodeToString(idBytes[6:8]), hex.EncodeToString(idBytes[8:10]), hex.EncodeToString(idBytes[10:]))
 	createdAt := time.Now().UTC()
 	key := fmt.Sprintf("incoming/%s/%s/%s", createdAt.Format("2006/01"), id, fileName)
 	hasher := sha256.New()
 	body := io.TeeReader(r.Body, hasher)
-	_, err := s.uploader.Upload(r.Context(), &s3.PutObjectInput{
+	_, err = s.uploader.Upload(r.Context(), &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket), Key: aws.String(key), Body: body,
 		ContentLength: aws.Int64(r.ContentLength), ContentType: aws.String("application/octet-stream"),
 		Metadata: map[string]string{"upload-id": id, "source-file-name": fileName, "uploaded-at": createdAt.Format(time.RFC3339Nano)},
@@ -388,6 +413,42 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(record.RawUpload)
+}
+
+func (s *server) createConversionJob(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+	defer r.Body.Close()
+	var request createConversionJobRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || !isUUID(request.RawUploadID) || request.MinZoom < 0 || request.MaxZoom > 24 || request.MinZoom > request.MaxZoom || len(request.LayerName) > 120 {
+		http.Error(w, "invalid conversion request", http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		http.Error(w, "invalid conversion request", http.StatusBadRequest)
+		return
+	}
+	id, err := newUUID()
+	if err != nil {
+		http.Error(w, "could not create conversion job", http.StatusInternalServerError)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	job, err := s.store.CreateConversionJob(ctx, id, request.RawUploadID, request.MinZoom, request.MaxZoom, strings.TrimSpace(request.LayerName))
+	if errors.Is(err, catalog.ErrRawUploadNotFound) {
+		http.Error(w, "source data is not ready for conversion", http.StatusConflict)
+		return
+	}
+	if err != nil {
+		slog.Error("queue conversion job", "error", err)
+		http.Error(w, "could not queue conversion job", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(conversionJobResponse{ID: job.ID, RawUploadID: job.RawUploadID, Status: job.Status, MinZoom: job.MinZoom, MaxZoom: job.MaxZoom, LayerName: job.LayerName, CreatedAt: job.CreatedAt})
 }
 
 func (s *server) deleteUpload(w http.ResponseWriter, r *http.Request) {
@@ -427,6 +488,18 @@ func isUUID(value string) bool {
 	}
 	_, err := hex.DecodeString(strings.ReplaceAll(value, "-", ""))
 	return err == nil
+}
+
+func newUUID() (string, error) {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	// RFC 4122 version 4 and variant 1 bits make the generated identifier
+	// unambiguous to PostgreSQL and external tooling.
+	bytes[6] = (bytes[6] & 0x0f) | 0x40
+	bytes[8] = (bytes[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%s-%s-%s-%s-%s", hex.EncodeToString(bytes[:4]), hex.EncodeToString(bytes[4:6]), hex.EncodeToString(bytes[6:8]), hex.EncodeToString(bytes[8:10]), hex.EncodeToString(bytes[10:])), nil
 }
 
 func securityHeaders(next http.Handler) http.Handler {
