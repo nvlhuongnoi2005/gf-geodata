@@ -125,6 +125,7 @@ func main() {
 	mux.Handle("GET /api/geodata/v1/summary", app.requireAdmin(http.HandlerFunc(app.summary)))
 	mux.Handle("GET /api/geodata/v1/uploads", app.requireAdmin(http.HandlerFunc(app.listUploads)))
 	mux.Handle("PUT /api/geodata/v1/uploads", app.requireAdmin(http.HandlerFunc(app.upload)))
+	mux.Handle("DELETE /api/geodata/v1/uploads/{uploadID}", app.requireAdmin(http.HandlerFunc(app.deleteUpload)))
 	address := os.Getenv("HTTP_ADDR")
 	if address == "" {
 		address = ":8090"
@@ -387,6 +388,45 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(record.RawUpload)
+}
+
+func (s *server) deleteUpload(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("uploadID")
+	if !isUUID(id) {
+		http.Error(w, "invalid source data identifier", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	objectKey, err := s.store.RawObjectKey(ctx, id)
+	if errors.Is(err, catalog.ErrRawUploadNotFound) {
+		http.Error(w, "source data not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		slog.Error("read raw upload metadata for deletion failed", "upload_id", id, "error", err)
+		http.Error(w, "could not delete source data", http.StatusServiceUnavailable)
+		return
+	}
+	if _, err := s.objectStore.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(objectKey)}); err != nil {
+		slog.Error("delete raw object failed", "upload_id", id, "error", err)
+		http.Error(w, "could not delete raw data", http.StatusBadGateway)
+		return
+	}
+	if err := s.store.Delete(ctx, id); err != nil {
+		slog.Error("delete raw upload metadata failed", "upload_id", id, "error", err)
+		http.Error(w, "raw data was removed but catalog removal failed; retry deletion", http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func isUUID(value string) bool {
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
+		return false
+	}
+	_, err := hex.DecodeString(strings.ReplaceAll(value, "-", ""))
+	return err == nil
 }
 
 func securityHeaders(next http.Handler) http.Handler {

@@ -3,11 +3,13 @@ package catalog
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"net"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -26,6 +28,8 @@ type Config struct {
 type Store struct {
 	pool *pgxpool.Pool
 }
+
+var ErrRawUploadNotFound = errors.New("raw upload not found")
 
 // RawUpload is the safe catalog view returned to the browser. Storage paths and
 // account details deliberately remain private to this package.
@@ -149,4 +153,18 @@ LIMIT $1`, limit)
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (s *Store) RawObjectKey(ctx context.Context, id string) (string, error) {
+	var objectKey string
+	err := s.pool.QueryRow(ctx, "SELECT raw_object_key FROM raw_uploads WHERE id = $1", id).Scan(&objectKey)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrRawUploadNotFound
+	}
+	return objectKey, err
+}
+
+func (s *Store) Delete(ctx context.Context, id string) error {
+	_, err := s.pool.Exec(ctx, "DELETE FROM raw_uploads WHERE id = $1", id)
+	return err
 }

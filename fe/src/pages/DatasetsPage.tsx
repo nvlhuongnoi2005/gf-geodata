@@ -9,6 +9,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  IconButton,
   LinearProgress,
   MenuItem,
   Paper,
@@ -20,9 +21,10 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
-import { Database, FileUp, ShieldCheck, UploadCloud } from "lucide-react";
+import { Database, FileUp, ShieldCheck, Trash2, UploadCloud } from "lucide-react";
 import { useI18n, type TranslationKey } from "../i18n";
 import { useAuth } from "../auth";
 
@@ -89,6 +91,9 @@ export function DatasetsPage() {
   const [items, setItems] = useState<RawUpload[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<RawUpload | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteFailed, setDeleteFailed] = useState(false);
 
   const loadUploads = useCallback(async () => {
     if (!accessToken) {
@@ -159,6 +164,25 @@ export function DatasetsPage() {
     xhr.send(file);
   };
 
+  const deleteRawData = async () => {
+    if (!deleteTarget || !accessToken || deleting) return;
+    setDeleting(true);
+    setDeleteFailed(false);
+    try {
+      const response = await fetch(`/api/geodata/v1/uploads/${encodeURIComponent(deleteTarget.id)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!response.ok) throw new Error("Could not delete raw data");
+      setItems((current) => current.filter((item) => item.id !== deleteTarget.id));
+      setDeleteTarget(null);
+    } catch {
+      setDeleteFailed(true);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const dataTypeLabel = (value: string) => t(dataTypeLabels[value as DataType] ?? "datasets.type.other");
 
   return (
@@ -223,7 +247,16 @@ export function DatasetsPage() {
                   <TableCell>{formatSourceFormat(item.format)}</TableCell>
                   <TableCell align="right">{formatFileSize(item.byteSize)}</TableCell>
                   <TableCell>{new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(item.createdAt))}</TableCell>
-                  <TableCell><Chip size="small" color="success" variant="outlined" label={t(statusLabels[item.status] ?? "datasets.status.uploaded")} /></TableCell>
+                  <TableCell>
+                    <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
+                      <Chip size="small" color="success" variant="outlined" label={t(statusLabels[item.status] ?? "datasets.status.uploaded")} />
+                      <Tooltip title={t("datasets.delete")}>
+                        <IconButton size="small" color="error" onClick={() => { setDeleteFailed(false); setDeleteTarget(item); }} aria-label={t("datasets.delete")}>
+                          <Trash2 size={16} />
+                        </IconButton>
+                      </Tooltip>
+                    </Stack>
+                  </TableCell>
                 </TableRow>
               ))}</TableBody>
             </Table>
@@ -260,6 +293,25 @@ export function DatasetsPage() {
         <DialogActions sx={{ px: 3, py: 2 }}>
           <Button onClick={() => setUploadPanelOpen(false)} disabled={uploading}>{t("common.close")}</Button>
           <Button variant="contained" onClick={startUpload} disabled={!selectedFile || !dataName.trim() || !dataType || !accessToken || uploading} startIcon={<UploadCloud size={16} />}>{t("datasets.startUpload")}</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={Boolean(deleteTarget)} onClose={() => !deleting && setDeleteTarget(null)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>{t("datasets.deleteTitle")}</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2}>
+            <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.6 }}>
+              {t("datasets.deleteDescription", { name: deleteTarget?.name ?? "" })}
+            </Typography>
+            <Alert severity="warning">{t("datasets.deleteWarning")}</Alert>
+            {deleteFailed && <Alert severity="error">{t("datasets.deleteFailed")}</Alert>}
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button onClick={() => setDeleteTarget(null)} disabled={deleting}>{t("common.close")}</Button>
+          <Button variant="contained" color="error" onClick={() => void deleteRawData()} disabled={deleting} startIcon={<Trash2 size={16} />}>
+            {t("datasets.delete")}
+          </Button>
         </DialogActions>
       </Dialog>
     </Stack>
