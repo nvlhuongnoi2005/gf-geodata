@@ -135,14 +135,14 @@ export function PipelinePage() {
             variant="outlined"
             startIcon={<RefreshCw size={16} />}
           >
-            Làm mới trạng thái
+            {t("pipeline.refresh")}
           </Button>
           <Button
             variant="contained"
             startIcon={<Play size={16} />}
             disabled
           >
-            Tạo tác vụ chuyển đổi
+            {t("pipeline.create")}
           </Button>
         </Stack>
       </Stack>
@@ -157,7 +157,7 @@ export function PipelinePage() {
       >
         <Paper variant="outlined" sx={{ p: 2 }}>
           <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-            Đang xử lý
+            {t("pipeline.running")}
           </Typography>
           <Typography sx={{ fontSize: "1.45rem", fontWeight: 700, mt: 0.5, color: "text.primary" }}>
             {runningCount} tác vụ
@@ -169,7 +169,7 @@ export function PipelinePage() {
 
         <Paper variant="outlined" sx={{ p: 2 }}>
           <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-            Chờ xử lý
+            {t("pipeline.queued")}
           </Typography>
           <Typography sx={{ fontSize: "1.45rem", fontWeight: 700, mt: 0.5, color: "text.primary" }}>
             {queuedCount} tác vụ
@@ -181,7 +181,7 @@ export function PipelinePage() {
 
         <Paper variant="outlined" sx={{ p: 2 }}>
           <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-            Đã hoàn tất
+            {t("pipeline.completed")}
           </Typography>
           <Typography sx={{ fontSize: "1.45rem", fontWeight: 700, mt: 0.5, color: "success.main" }}>
             {completedCount} tác vụ
@@ -193,7 +193,7 @@ export function PipelinePage() {
 
         <Paper variant="outlined" sx={{ p: 2 }}>
           <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-            Cần kiểm tra lại
+            {t("pipeline.needsCheck")}
           </Typography>
           <Typography sx={{ fontSize: "1.45rem", fontWeight: 700, mt: 0.5, color: "warning.main" }}>
             {needsCheckCount} tác vụ
@@ -231,7 +231,7 @@ export function PipelinePage() {
 
           <TextField
             size="small"
-            placeholder="Tìm theo mã tác vụ, dữ liệu nguồn..."
+              placeholder={t("pipeline.search")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             slotProps={{
@@ -253,13 +253,13 @@ export function PipelinePage() {
         <Table sx={{ minWidth: 780 }}>
           <TableHead>
             <TableRow>
-              <TableCell>Mã tác vụ & Dữ liệu nguồn</TableCell>
-              <TableCell>Cấu hình đầu ra</TableCell>
-              <TableCell>Tiến trình & Bước hiện tại</TableCell>
-              <TableCell>Dung lượng</TableCell>
-              <TableCell>Thời gian</TableCell>
-              <TableCell>Trạng thái</TableCell>
-              <TableCell align="right">Hành động</TableCell>
+              <TableCell>{t("pipeline.source")}</TableCell>
+              <TableCell>{t("pipeline.output")}</TableCell>
+              <TableCell>{t("pipeline.progress")}</TableCell>
+              <TableCell>{t("pipeline.duration")}</TableCell>
+              <TableCell>{t("pipeline.time")}</TableCell>
+              <TableCell>{t("pipeline.status")}</TableCell>
+              <TableCell align="right">{t("pipeline.actions")}</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -267,7 +267,7 @@ export function PipelinePage() {
               <TableRow>
                 <TableCell colSpan={7} sx={{ textAlign: "center", py: 5 }}>
                   <Typography color="text.secondary">
-                    Không tìm thấy tác vụ chuyển đổi phù hợp
+                    {t("pipeline.empty")}
                   </Typography>
                 </TableCell>
               </TableRow>
@@ -317,10 +317,10 @@ export function PipelinePage() {
                   </TableCell>
                   <TableCell>
                     <Typography variant="caption" sx={{ display: "block" }}>
-                      Nguồn: {item.inputSize}
+                      {t("pipeline.source")}: {item.inputSize}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
-                      Đích: {item.outputSize}
+                      {t("pipeline.output")}: {item.outputSize}
                     </Typography>
                   </TableCell>
                   <TableCell>
@@ -334,7 +334,7 @@ export function PipelinePage() {
                   <TableCell>
                     {item.status === "running" && (
                       <Chip
-                        label="Đang xử lý"
+                        label={t("pipeline.running")}
                         size="small"
                         color="primary"
                         sx={{ fontWeight: 700 }}
@@ -352,14 +352,14 @@ export function PipelinePage() {
                     {item.status === "needs_check" && (
                       <Chip
                         icon={<AlertCircle size={13} />}
-                        label="Cần kiểm tra"
+                        label={t("pipeline.needsCheck")}
                         size="small"
                         color="warning"
                         sx={{ fontWeight: 700 }}
                       />
                     )}
                     {item.status === "queued" && (
-                      <Chip label="Chờ xử lý" size="small" variant="outlined" />
+                      <Chip label={t("pipeline.queued")} size="small" variant="outlined" />
                     )}
                   </TableCell>
                   <TableCell align="right">
@@ -375,7 +375,7 @@ export function PipelinePage() {
                           startIcon={<RotateCcw size={14} />}
                           onClick={() => handleRetryTask(item.id)}
                         >
-                          Thử lại
+                          {t("pipeline.retry")}
                         </Button>
                       )}
                       {item.status === "running" && (
@@ -385,7 +385,7 @@ export function PipelinePage() {
                           color="inherit"
                           onClick={() => handleCancelTask(item.id)}
                         >
-                          Hủy
+                          {t("pipeline.cancel")}
                         </Button>
                       )}
                     </Stack>
@@ -405,7 +405,7 @@ export function PipelinePage() {
         fullWidth
       >
         <DialogTitle sx={{ fontWeight: 700, fontSize: "1.15rem" }}>
-          Tạo tác vụ chuyển đổi dữ liệu
+          {t("pipeline.create")}
         </DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2.5}>
@@ -415,10 +415,10 @@ export function PipelinePage() {
             </Typography>
 
             <FormControl fullWidth size="small">
-              <InputLabel>Dữ liệu nguồn</InputLabel>
+              <InputLabel>{t("pipeline.sourceData")}</InputLabel>
               <Select
                 value={formDataset}
-                label="Dữ liệu nguồn"
+                label={t("pipeline.sourceData")}
                 onChange={(e) => setFormDataset(e.target.value)}
               >
                 <MenuItem value="" disabled>
@@ -428,10 +428,10 @@ export function PipelinePage() {
             </FormControl>
 
             <FormControl fullWidth size="small">
-              <InputLabel>Cấu hình đầu ra</InputLabel>
+              <InputLabel>{t("pipeline.outputConfig")}</InputLabel>
               <Select
                 value={formConfig}
-                label="Cấu hình đầu ra"
+                label={t("pipeline.outputConfig")}
                 onChange={(e) => setFormConfig(e.target.value)}
               >
                 <MenuItem value="raster_stream">
@@ -447,10 +447,10 @@ export function PipelinePage() {
             </FormControl>
 
             <FormControl fullWidth size="small">
-              <InputLabel>Hệ quy chiếu đích (Target CRS)</InputLabel>
+              <InputLabel>{t("pipeline.targetCrs")}</InputLabel>
               <Select
                 value={formTargetCrs}
-                label="Hệ quy chiếu đích (Target CRS)"
+                label={t("pipeline.targetCrs")}
                 onChange={(e) => setFormTargetCrs(e.target.value)}
               >
                 <MenuItem value="EPSG:3857 (Chuẩn Web)">
@@ -463,7 +463,7 @@ export function PipelinePage() {
 
             <Stack direction="row" spacing={2}>
               <TextField
-                label="Mức Zoom tối thiểu (Min Zoom)"
+                label={t("pipeline.minZoom")}
                 type="number"
                 size="small"
                 fullWidth
@@ -471,7 +471,7 @@ export function PipelinePage() {
                 onChange={(e) => setFormMinZoom(e.target.value)}
               />
               <TextField
-                label="Mức Zoom tối đa (Max Zoom)"
+                label={t("pipeline.maxZoom")}
                 type="number"
                 size="small"
                 fullWidth
@@ -483,7 +483,7 @@ export function PipelinePage() {
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
           <Button variant="outlined" onClick={() => setOpenCreateModal(false)}>
-            Hủy
+            {t("pipeline.cancelDialog")}
           </Button>
           <Button
             variant="contained"
@@ -491,7 +491,7 @@ export function PipelinePage() {
             disabled={!formDataset}
             onClick={handleCreateTask}
           >
-            Bắt đầu chuyển đổi
+            {t("pipeline.start")}
           </Button>
         </DialogActions>
       </Dialog>
@@ -614,7 +614,7 @@ export function PipelinePage() {
                     setDrawerOpen(false);
                   }}
                 >
-                  Thử lại tác vụ
+                  {t("pipeline.retry")}
                 </Button>
               )}
               <Button variant="outlined" onClick={() => setDrawerOpen(false)}>

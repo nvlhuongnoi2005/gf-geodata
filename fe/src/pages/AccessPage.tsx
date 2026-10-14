@@ -44,11 +44,10 @@ import {
 } from "lucide-react";
 import { useI18n } from "../i18n";
 
-export type PrincipalAcl = {
+export type AccessGrant = {
   id: string;
-  principalType: "user" | "group";
-  principalName: string;
-  principalSub: string;
+  recipientType: "user" | "group";
+  recipientName: string;
   department?: string;
   grantedReleases: string[];
   scope: "view_only" | "view_and_export";
@@ -62,7 +61,7 @@ export type AuditLogEntry = {
   timestamp: string;
   actor: string;
   action: "GRANT" | "REVOKE" | "ACCESS_DENIED";
-  targetPrincipal: string;
+  recipient: string;
   resource: string;
   details: string;
 };
@@ -70,7 +69,7 @@ export type AuditLogEntry = {
 export function AccessPage() {
   const { t } = useI18n();
   const [tabIndex, setTabIndex] = useState(0);
-  const [acls] = useState<PrincipalAcl[]>([]);
+  const [acls] = useState<AccessGrant[]>([]);
   const [auditLogs] = useState<AuditLogEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [openGrantModal, setOpenGrantModal] = useState(false);
@@ -78,7 +77,6 @@ export function AccessPage() {
   // Form states
   const [formType, setFormType] = useState<"user" | "group">("user");
   const [formName, setFormName] = useState("");
-  const [formSub, setFormSub] = useState("");
   const [formDepartment, setFormDepartment] = useState("");
   const [formRelease, setFormRelease] = useState("");
   const [formScope, setFormScope] = useState<"view_only" | "view_and_export">("view_only");
@@ -93,22 +91,21 @@ export function AccessPage() {
   const filteredAcls = acls.filter((a) => {
     const matchesTab =
       tabIndex === 0
-        ? a.principalType === "user"
+        ? a.recipientType === "user"
         : tabIndex === 1
-          ? a.principalType === "group"
+          ? a.recipientType === "group"
           : true;
     const matchesSearch =
-      a.principalName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      a.principalSub.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      a.recipientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (a.department && a.department.toLowerCase().includes(searchQuery.toLowerCase()));
     return matchesTab && matchesSearch;
   });
 
   const activeUsersCount = acls.filter(
-    (a) => a.principalType === "user" && a.status === "active"
+    (a) => a.recipientType === "user" && a.status === "active"
   ).length;
   const activeGroupsCount = acls.filter(
-    (a) => a.principalType === "group" && a.status === "active"
+    (a) => a.recipientType === "group" && a.status === "active"
   ).length;
 
   return (
@@ -267,7 +264,7 @@ export function AccessPage() {
           {tabIndex !== 2 && (
             <TextField
               size="small"
-              placeholder="Tìm theo tên, email, sub, đơn vị..."
+              placeholder={t("access.search")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               slotProps={{
@@ -291,20 +288,20 @@ export function AccessPage() {
           <Table sx={{ minWidth: 800 }}>
             <TableHead>
               <TableRow>
-                <TableCell>Đối tượng (Principal & UUID `sub`)</TableCell>
-                <TableCell>Đơn vị / Phòng ban</TableCell>
-                <TableCell>Map Releases được cấp quyền</TableCell>
-                <TableCell>Phạm vi quyền</TableCell>
-                <TableCell>Người cấp & Thời điểm</TableCell>
-                <TableCell>Trạng thái</TableCell>
-                <TableCell align="right">Hành động</TableCell>
+                <TableCell>{t("access.subject")}</TableCell>
+                <TableCell>{t("access.department")}</TableCell>
+                <TableCell>{t("access.releases")}</TableCell>
+                <TableCell>{t("access.scope")}</TableCell>
+                <TableCell>{t("access.grantedBy")}</TableCell>
+                <TableCell>{t("access.status")}</TableCell>
+                <TableCell align="right">{t("access.actions")}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {filteredAcls.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={7} sx={{ textAlign: "center", py: 5 }}>
-                    <Typography color="text.secondary">Chưa có phân quyền nào</Typography>
+                    <Typography color="text.secondary">{t("access.empty")}</Typography>
                   </TableCell>
                 </TableRow>
               ) : (
@@ -312,13 +309,7 @@ export function AccessPage() {
                   <TableRow key={acl.id} hover>
                     <TableCell>
                       <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                        {acl.principalName}
-                      </Typography>
-                      <Typography
-                        variant="caption"
-                        sx={{ color: "text.secondary", fontFamily: "monospace" }}
-                      >
-                        {acl.principalSub}
+                        {acl.recipientName}
                       </Typography>
                     </TableCell>
                     <TableCell>
@@ -399,12 +390,12 @@ export function AccessPage() {
           <Table sx={{ minWidth: 800 }}>
             <TableHead>
               <TableRow>
-                <TableCell>Thời gian</TableCell>
-                <TableCell>Tác tử thực hiện (Actor)</TableCell>
-                <TableCell>Hành động</TableCell>
-                <TableCell>Đối tượng tác động</TableCell>
-                <TableCell>Tài nguyên</TableCell>
-                <TableCell>Chi tiết kiểm toán (Audit detail)</TableCell>
+                <TableCell>{t("access.auditTime")}</TableCell>
+                <TableCell>{t("access.auditActor")}</TableCell>
+                <TableCell>{t("access.auditAction")}</TableCell>
+                <TableCell>{t("access.auditTarget")}</TableCell>
+                <TableCell>{t("access.auditResource")}</TableCell>
+                <TableCell>{t("access.auditDetails")}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -448,7 +439,7 @@ export function AccessPage() {
                   </TableCell>
                   <TableCell>
                     <Typography variant="caption" sx={{ fontWeight: 600 }}>
-                      {log.targetPrincipal}
+                      {log.recipient}
                     </Typography>
                   </TableCell>
                   <TableCell>
@@ -473,23 +464,22 @@ export function AccessPage() {
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle sx={{ fontWeight: 800 }}>Cấp quyền truy cập Geodata (ACL)</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 800 }}>{t("access.grantTitle")}</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2.5}>
             <Alert severity="info" sx={{ fontSize: 13 }}>
-              Quyền xem bản đồ được gắn trực tiếp với định danh `sub` từ `db-auth`. User không có
-              quyền sẽ không thể tải tile hoặc style.
+              Chỉ người dùng hoặc nhóm được cấp quyền mới có thể xem nội dung bản đồ.
             </Alert>
 
             <FormControl fullWidth size="small">
-              <InputLabel>Loại đối tượng</InputLabel>
+              <InputLabel>{t("access.type")}</InputLabel>
               <Select
                 value={formType}
-                label="Loại đối tượng"
+                label={t("access.type")}
                 onChange={(e) => setFormType(e.target.value as "user" | "group")}
               >
-                <MenuItem value="user">Người dùng cụ thể (User UUID)</MenuItem>
-                <MenuItem value="group">Nhóm / Đơn vị tổ chức (Group / Org)</MenuItem>
+                <MenuItem value="user">{t("access.user")}</MenuItem>
+                <MenuItem value="group">{t("access.group")}</MenuItem>
               </Select>
             </FormControl>
 
@@ -503,20 +493,6 @@ export function AccessPage() {
             />
 
             <TextField
-              label={
-                formType === "user"
-                  ? "Mã định danh User sub (db-auth UUID)"
-                  : "Mã định danh Group ID"
-              }
-              fullWidth
-              size="small"
-              value={formSub}
-              onChange={(e) => setFormSub(e.target.value)}
-              placeholder="Ví dụ: usr-8a1f-4421-bc39-a9902c"
-              helperText="Được trích xuất từ JWT claim sub của auth service WebGIS (FR-32)"
-            />
-
-            <TextField
               label="Phòng ban / Đơn vị công tác"
               fullWidth
               size="small"
@@ -526,10 +502,10 @@ export function AccessPage() {
             />
 
             <FormControl fullWidth size="small">
-              <InputLabel>Chọn Map Release cần cấp quyền</InputLabel>
+              <InputLabel>{t("access.chooseRelease")}</InputLabel>
               <Select
                 value={formRelease}
-                label="Chọn Map Release cần cấp quyền"
+                label={t("access.chooseRelease")}
                 onChange={(e) => setFormRelease(e.target.value)}
               >
                 <MenuItem value="" disabled>
@@ -539,14 +515,14 @@ export function AccessPage() {
             </FormControl>
 
             <FormControl fullWidth size="small">
-              <InputLabel>Phạm vi quyền (Scope)</InputLabel>
+              <InputLabel>{t("access.scopeLabel")}</InputLabel>
               <Select
                 value={formScope}
-                label="Phạm vi quyền (Scope)"
+                label={t("access.scopeLabel")}
                 onChange={(e) => setFormScope(e.target.value as "view_only" | "view_and_export")}
               >
-                <MenuItem value="view_only">Chỉ xem bản đồ (Render vector/raster tiles)</MenuItem>
-                <MenuItem value="view_and_export">Xem bản đồ & Cho phép tải raw tileset</MenuItem>
+                <MenuItem value="view_only">{t("access.viewOnly")}</MenuItem>
+                <MenuItem value="view_and_export">{t("access.viewExport")}</MenuItem>
               </Select>
             </FormControl>
 
@@ -566,7 +542,7 @@ export function AccessPage() {
           <Button variant="outlined" onClick={() => setOpenGrantModal(false)}>
             Hủy
           </Button>
-          <Button variant="contained" disabled={!formName || !formSub} onClick={handleGrantAccess}>
+          <Button variant="contained" disabled={!formName} onClick={handleGrantAccess}>
             Cấp quyền ngay
           </Button>
         </DialogActions>

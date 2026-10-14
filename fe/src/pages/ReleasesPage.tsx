@@ -31,7 +31,6 @@ import {
 } from "@mui/material";
 import {
   CheckCircle2,
-  Copy,
   Eye,
   Globe,
   Layers,
@@ -59,7 +58,6 @@ export type MapRelease = {
   overlays: string[];
   updatedAt: string;
   publishedAt?: string;
-  tileJsonUrl: string;
 };
 
 export function ReleasesPage() {
@@ -69,7 +67,6 @@ export function ReleasesPage() {
   const [visibilityFilter, setVisibilityFilter] = useState("all");
   const [openCreateModal, setOpenCreateModal] = useState(false);
   const [previewRelease, setPreviewRelease] = useState<MapRelease | null>(null);
-  const [copySuccess, setCopySuccess] = useState<string | null>(null);
 
   // Form state
   const [formName, setFormName] = useState("");
@@ -99,12 +96,6 @@ export function ReleasesPage() {
 
   const handleTogglePublish = (_id: string) => undefined;
   const handleRollback = (_id: string) => undefined;
-
-  const handleCopyUrl = (url: string) => {
-    void navigator.clipboard.writeText(window.location.origin + url);
-    setCopySuccess(url);
-    setTimeout(() => setCopySuccess(null), 2500);
-  };
 
   const filteredReleases = releases.filter((r) => {
     const matchesVis = visibilityFilter === "all" || r.visibility === visibilityFilter;
@@ -309,19 +300,19 @@ export function ReleasesPage() {
         <Table sx={{ minWidth: 800 }}>
           <TableHead>
             <TableRow>
-              <TableCell>Tên Map Release & Slug</TableCell>
-              <TableCell>Cấu hình Basemap & Overlays</TableCell>
-              <TableCell>Phạm vi (Visibility)</TableCell>
-              <TableCell>Phiên bản</TableCell>
-              <TableCell>Trạng thái</TableCell>
-              <TableCell align="right">Hành động</TableCell>
+                <TableCell>{t("release.nameSlug")}</TableCell>
+                <TableCell>{t("release.basemapOverlays")}</TableCell>
+                <TableCell>{t("release.visibility")}</TableCell>
+                <TableCell>{t("release.version")}</TableCell>
+                <TableCell>{t("release.status")}</TableCell>
+                <TableCell align="right">{t("release.actions")}</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {filteredReleases.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} sx={{ textAlign: "center", py: 5 }}>
-                  <Typography color="text.secondary">Không tìm thấy Map Release nào</Typography>
+                  <Typography color="text.secondary">{t("release.empty")}</Typography>
                 </TableCell>
               </TableRow>
             ) : (
@@ -442,15 +433,6 @@ export function ReleasesPage() {
                           Preview
                         </Button>
                       </Tooltip>
-                      <Tooltip title="Sao chép TileJSON URL">
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          onClick={() => handleCopyUrl(release.tileJsonUrl)}
-                        >
-                          <Copy size={14} />
-                        </Button>
-                      </Tooltip>
                       {release.previousVersion && (
                         <Tooltip
                           title={`Rollback về version ${release.previousVersion} mà không cần convert lại`}
@@ -483,13 +465,6 @@ export function ReleasesPage() {
         </Table>
       </TableContainer>
 
-      {/* Copy notification */}
-      {copySuccess && (
-        <Alert severity="success" sx={{ position: "fixed", bottom: 24, right: 24, zIndex: 9999 }}>
-          Đã sao chép TileJSON URL vào bộ nhớ tạm!
-        </Alert>
-      )}
-
       {/* Create Release Modal */}
       <Dialog
         open={openCreateModal}
@@ -497,7 +472,7 @@ export function ReleasesPage() {
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle sx={{ fontWeight: 800 }}>Tạo Map Release mới</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 800 }}>{t("release.createTitle")}</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2.5}>
             <Alert severity="info" sx={{ fontSize: 13 }}>
@@ -515,12 +490,12 @@ export function ReleasesPage() {
             />
 
             <TextField
-              label="Slug nhận diện (URL)"
+              label={t("release.identifier")}
               fullWidth
               size="small"
               value={formSlug}
               onChange={(e) => setFormSlug(e.target.value)}
-              helperText={`Endpoint: /api/tiles/${formSlug || "{slug}"}/tilejson.json`}
+              helperText={t("release.identifierHelp")}
             />
 
             <TextField
@@ -534,7 +509,7 @@ export function ReleasesPage() {
             />
 
             <FormControl fullWidth size="small">
-              <InputLabel>Style Basemap chính</InputLabel>
+              <InputLabel>{t("release.basemap")}</InputLabel>
               <Select
                 value={formBasemap}
                 label="Style Basemap chính"
@@ -556,10 +531,10 @@ export function ReleasesPage() {
             </Box>
 
             <FormControl fullWidth size="small">
-              <InputLabel>Chính sách truy cập (Visibility)</InputLabel>
+              <InputLabel>{t("release.accessPolicyLabel")}</InputLabel>
               <Select
                 value={formVisibility}
-                label="Chính sách truy cập (Visibility)"
+                label={t("release.accessPolicyLabel")}
                 onChange={(e) =>
                   setFormVisibility(e.target.value as "public" | "authenticated" | "restricted")
                 }
@@ -571,7 +546,7 @@ export function ReleasesPage() {
                   Authenticated — Tất cả user đăng nhập vào WebGIS đều xem được
                 </MenuItem>
                 <MenuItem value="restricted">
-                  Restricted — Chỉ user hoặc nhóm được cấp quyền cụ thể qua UUID (FR-31, FR-32)
+                  Giới hạn — Chỉ người dùng hoặc nhóm được cấp quyền mới xem được
                 </MenuItem>
               </Select>
             </FormControl>
@@ -639,18 +614,6 @@ export function ReleasesPage() {
                 </Stack>
               </Paper>
 
-              <Box sx={{ p: 1.5, bgcolor: "action.hover", borderRadius: 2 }}>
-                <Typography variant="caption" sx={{ fontWeight: 700, display: "block" }}>
-                  TileJSON Endpoint:
-                </Typography>
-                <Typography
-                  variant="caption"
-                  sx={{ fontFamily: "monospace", color: "primary.main" }}
-                >
-                  {window.location.origin}
-                  {previewRelease.tileJsonUrl}
-                </Typography>
-              </Box>
             </Stack>
           )}
         </DialogContent>

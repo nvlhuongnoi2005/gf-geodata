@@ -210,13 +210,13 @@ export function StyleStudioPage() {
             sx={{ alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
           >
             <FormControl size="small" sx={{ minWidth: 230 }}>
-              <InputLabel>Mẫu Style có sẵn (Preset)</InputLabel>
+              <InputLabel>{t("style.presetLabel")}</InputLabel>
               <Select
                 value={selectedPreset}
-                label="Mẫu Style có sẵn (Preset)"
+                label={t("style.presetLabel")}
                 onChange={handleSelectPreset}
               >
-                <MenuItem value="empty">Style trống</MenuItem>
+                <MenuItem value="empty">{t("style.emptyPreset")}</MenuItem>
               </Select>
             </FormControl>
 
@@ -226,7 +226,7 @@ export function StyleStudioPage() {
               startIcon={<Code2 size={15} />}
               onClick={formatJson}
             >
-              Định dạng JSON (Beautify)
+              {t("style.formatJson")}
             </Button>
 
             <Button
@@ -387,14 +387,14 @@ export function StyleStudioPage() {
           <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
             <Box>
               <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                Danh sách Layer ({layerList.length})
+                {t("style.layerList")} ({layerList.length})
               </Typography>
               <Typography variant="caption" color="text.secondary">
                 Các lớp hiển thị trong style hiện tại
               </Typography>
             </Box>
             <Button size="small" onClick={() => setLayerDrawerOpen(false)}>
-              Đóng
+              {t("style.close")}
             </Button>
           </Stack>
 
@@ -429,7 +429,7 @@ export function StyleStudioPage() {
 
       {/* Save Version Modal */}
       <Dialog open={saveModalOpen} onClose={() => setSaveModalOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: 800 }}>Lưu Style Version mới (FR-19)</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 800 }}>{t("style.saveTitle")}</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2.5}>
             <Alert severity="info" sx={{ fontSize: 13 }}>
@@ -460,7 +460,7 @@ export function StyleStudioPage() {
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
           <Button variant="outlined" onClick={() => setSaveModalOpen(false)}>
-            Hủy
+            {t("style.close")}
           </Button>
           <Button variant="contained" startIcon={<Save size={16} />} onClick={handleSaveVersion}>
             Lưu phiên bản này
