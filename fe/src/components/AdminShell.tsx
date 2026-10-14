@@ -2,7 +2,6 @@ import { lazy, Suspense, useState, type FormEvent, type ReactNode } from "react"
 import {
   AppBar,
   Avatar,
-  Badge,
   Box,
   Button,
   Chip,
@@ -523,10 +522,7 @@ export function AdminShell() {
             position="sticky"
             elevation={3}
             sx={{
-              background: (theme) =>
-                theme.palette.mode === "dark"
-                  ? "linear-gradient(135deg, #7f1d1d 0%, #991b1b 50%, #0f4c48 100%)"
-                  : "linear-gradient(135deg, #c62828 0%, #d32f2f 55%, #00796b 100%)",
+              backgroundColor: "#d32f2f",
               color: "#fff",
               borderBottom: "none",
             }}
@@ -574,9 +570,7 @@ export function AdminShell() {
                       "&:hover": { bgcolor: "rgba(255,255,255,0.12)" },
                     }}
                   >
-                    <Badge badgeContent={3} color="warning">
-                      <Bell size={18} />
-                    </Badge>
+                    <Bell size={18} />
                   </IconButton>
                 </Tooltip>
 
@@ -653,40 +647,13 @@ export function AdminShell() {
             transformOrigin={{ vertical: "top", horizontal: "right" }}
             slotProps={{ paper: { sx: { width: 340, p: 2, borderRadius: 2.5 } } }}
           >
-            <Stack spacing={1.5}>
-              <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
-                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
-                  Thông báo hệ thống (3)
-                </Typography>
-                <Chip label="Mới" size="small" color="primary" sx={{ height: 20, fontSize: 10 }} />
-              </Stack>
-              <Divider />
-              <Stack spacing={1.2}>
-                <Box sx={{ p: 1, borderRadius: 1.5, bgcolor: "action.hover" }}>
-                  <Typography variant="body2" sx={{ fontWeight: 700, fontSize: 13 }}>
-                    Chuyển đổi dữ liệu: Tác vụ #081 đang chạy
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Đang xử lý mức tỷ lệ cho Ảnh vệ tinh Hà Nội 2026 (68%).
-                  </Typography>
-                </Box>
-                <Box sx={{ p: 1, borderRadius: 1.5, bgcolor: "action.hover" }}>
-                  <Typography variant="body2" sx={{ fontWeight: 700, fontSize: 13 }}>
-                    Bản phát hành đã cập nhật
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Bản đồ Nền Quốc Gia Vector v2.1 đã đồng bộ vào catalog.
-                  </Typography>
-                </Box>
-                <Box sx={{ p: 1, borderRadius: 1.5, bgcolor: "action.hover" }}>
-                  <Typography variant="body2" sx={{ fontWeight: 700, fontSize: 13 }}>
-                    Hạ tầng lưu trữ
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Vùng dữ liệu riêng tư sẵn sàng hoạt động an toàn.
-                  </Typography>
-                </Box>
-              </Stack>
+            <Stack spacing={0.75}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+                Thông báo hệ thống
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Chưa có thông báo.
+              </Typography>
             </Stack>
           </Popover>
 

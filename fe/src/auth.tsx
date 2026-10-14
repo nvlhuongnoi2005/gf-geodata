@@ -42,19 +42,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     const restore = async () => {
-      if (import.meta.env.VITE_GEODATA_DEMO === "true") {
-        setAccessToken("demo-only-token");
-        setUser({
-          id: "demo-admin",
-          name: "Geodata Admin",
-          email: "admin@local",
-          role: "admin",
-          scopes: [],
-        });
-        setIsLoading(false);
-        return;
-      }
-
       const headers = new Headers({ "Content-Type": "application/json" });
       const csrf = csrfToken();
       if (csrf) headers.set("X-CSRF-Token", csrf);

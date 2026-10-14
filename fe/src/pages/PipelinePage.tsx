@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Alert,
   Box,
@@ -63,115 +63,9 @@ export type ConversionTask = {
   }>;
 };
 
-const initialTasks: ConversionTask[] = [
-  {
-    id: "TASK-2026-081",
-    datasetName: "Ảnh vệ tinh Hà Nội 2026 (0.5m)",
-    sourceVersion: "v2.1",
-    configLabel: "Bản đồ Raster tối ưu hóa (Pyramids)",
-    status: "running",
-    progress: 68,
-    currentStep: "Đang tạo các mức chi tiết tổng quan (Overviews)",
-    duration: "1m 45s",
-    inputSize: "1.42 GB",
-    outputSize: "980 MB (tính toán)",
-    startedAt: "Hôm nay, 10:24",
-    stepsHistory: [
-      {
-        timestamp: "10:24",
-        label: "Tiếp nhận dữ liệu nguồn và kiểm tra tính hợp lệ",
-        status: "done",
-      },
-      { timestamp: "10:24", label: "Chuẩn hóa hệ quy chiếu tọa độ chuẩn hiển thị", status: "done" },
-      {
-        timestamp: "10:25",
-        label: "Đang tạo các mức chi tiết tổng quan (Overviews)",
-        status: "in_progress",
-      },
-      {
-        timestamp: "--:--",
-        label: "Kiểm toán tính toàn vẹn và tạo chỉ mục bản đồ",
-        status: "in_progress",
-      },
-    ],
-  },
-  {
-    id: "TASK-2026-079",
-    datasetName: "Ranh giới hành chính Việt Nam (Bộ TN&MT)",
-    sourceVersion: "v1.4",
-    configLabel: "Bản đồ Vector nhiều mức tỷ lệ (z0-z14)",
-    status: "completed",
-    progress: 100,
-    currentStep: "Hoàn tất chuyển đổi và kiểm toán tính toàn vẹn",
-    duration: "4m 12s",
-    inputSize: "480 MB",
-    outputSize: "84 MB",
-    startedAt: "Hôm nay, 09:15",
-    stepsHistory: [
-      { timestamp: "09:15", label: "Tiếp nhận các lớp dữ liệu ranh giới 3 cấp", status: "done" },
-      {
-        timestamp: "09:16",
-        label: "Tối ưu hóa hình học và đơn giản hóa đa mức tỷ lệ",
-        status: "done",
-      },
-      { timestamp: "09:18", label: "Sinh các khối dữ liệu vector phân mảnh", status: "done" },
-      { timestamp: "09:19", label: "Kiểm toán tính toàn vẹn và sẵn sàng xuất bản", status: "done" },
-    ],
-  },
-  {
-    id: "TASK-2026-078",
-    datasetName: "Dữ liệu giao thông OpenStreetMap Vietnam PBF",
-    sourceVersion: "v1.0",
-    configLabel: "Gói bản đồ vector giao thông (z0-z15)",
-    status: "completed",
-    progress: 100,
-    currentStep: "Sản phẩm chuyển đổi đã sẵn sàng liên kết bản đồ",
-    duration: "18m 30s",
-    inputSize: "3.1 GB",
-    outputSize: "890 MB",
-    startedAt: "Hôm qua, 16:40",
-    stepsHistory: [
-      {
-        timestamp: "16:40",
-        label: "Phân tách các lớp đường bộ, thủy văn và địa danh",
-        status: "done",
-      },
-      {
-        timestamp: "16:48",
-        label: "Xây dựng chỉ mục không gian cho mạng lưới giao thông",
-        status: "done",
-      },
-      { timestamp: "16:55", label: "Ghép nối các mức tỷ lệ hiển thị chi tiết", status: "done" },
-      { timestamp: "16:58", label: "Hoàn tất lưu trữ và phân quyền", status: "done" },
-    ],
-  },
-  {
-    id: "TASK-2026-075",
-    datasetName: "Mô hình số độ cao DEM Tây Nguyên 30m",
-    sourceVersion: "v1.0",
-    configLabel: "Bản đồ nổi địa hình (Hillshade)",
-    status: "needs_check",
-    progress: 42,
-    currentStep: "Cần kiểm tra: Cấu hình tài nguyên xử lý chưa phù hợp",
-    duration: "1m 12s",
-    inputSize: "2.8 GB",
-    outputSize: "--",
-    startedAt: "Hôm qua, 14:10",
-    stepsHistory: [
-      { timestamp: "14:10", label: "Tiếp nhận dữ liệu mô hình số độ cao", status: "done" },
-      { timestamp: "14:11", label: "Khởi tạo mô hình chiếu sáng nổi địa hình", status: "done" },
-      {
-        timestamp: "14:11",
-        label: "Tác vụ tạm dừng: Yêu cầu phân đoạn khối xử lý nhỏ hơn",
-        status: "error",
-      },
-    ],
-  },
-];
-
 export function PipelinePage() {
   const { t } = useI18n();
-  const [tasks, setTasks] = useState<ConversionTask[]>(initialTasks);
+  const [tasks] = useState<ConversionTask[]>([]);
   const [selectedTask, setSelectedTask] = useState<ConversionTask | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -179,35 +73,11 @@ export function PipelinePage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Form states
-  const [formDataset, setFormDataset] = useState("Ảnh vệ tinh Đà Nẵng 2026 (1m)");
+  const [formDataset, setFormDataset] = useState("");
   const [formConfig, setFormConfig] = useState("raster_stream");
   const [formTargetCrs, setFormTargetCrs] = useState("EPSG:3857 (Chuẩn Web)");
   const [formMinZoom, setFormMinZoom] = useState("0");
   const [formMaxZoom, setFormMaxZoom] = useState("16");
-
-  // Simulated progress
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTasks((prev) =>
-        prev.map((item) => {
-          if (item.status === "running") {
-            const nextProgress = Math.min(100, item.progress + 2);
-            if (nextProgress === 100) {
-              return {
-                ...item,
-                progress: 100,
-                status: "completed",
-                currentStep: "Hoàn tất chuyển đổi và kiểm toán tính toàn vẹn",
-              };
-            }
-            return { ...item, progress: nextProgress };
-          }
-          return item;
-        })
-      );
-    }, 4000);
-    return () => clearInterval(interval);
-  }, []);
 
   const filteredTasks = tasks.filter((item) => {
     const matchesFilter = filterStatus === "all" || item.status === filterStatus;
@@ -223,61 +93,11 @@ export function PipelinePage() {
   const completedCount = tasks.filter((t) => t.status === "completed").length;
   const needsCheckCount = tasks.filter((t) => t.status === "needs_check").length;
 
-  const handleRetryTask = (id: string) => {
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === id
-          ? {
-              ...t,
-              status: "running" as const,
-              progress: 10,
-              currentStep: "Đang khởi động lại với cấu hình tự động phân đoạn tối ưu...",
-            }
-          : t
-      )
-    );
-  };
-
-  const handleCancelTask = (id: string) => {
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === id
-          ? {
-              ...t,
-              status: "needs_check" as const,
-              currentStep: "Đã hủy bởi quản trị viên",
-            }
-          : t
-      )
-    );
-  };
+  // Task mutations will be supplied by the pipeline API.
+  const handleRetryTask = (_id: string) => undefined;
+  const handleCancelTask = (_id: string) => undefined;
 
   const handleCreateTask = () => {
-    const newTask: ConversionTask = {
-      id: `TASK-2026-${String(Math.floor(Math.random() * 900) + 100)}`,
-      datasetName: formDataset,
-      sourceVersion: "v1.0",
-      configLabel:
-        formConfig === "raster_stream"
-          ? `Bản đồ Raster tối ưu hóa (z${formMinZoom}-z${formMaxZoom})`
-          : `Bản đồ Vector nhiều mức tỷ lệ (z${formMinZoom}-z${formMaxZoom})`,
-      status: "running",
-      progress: 5,
-      currentStep: "Tiếp nhận dữ liệu nguồn và chuẩn bị môi trường chuyển đổi",
-      duration: "0m 10s",
-      inputSize: "850 MB",
-      outputSize: "Đang tính toán...",
-      startedAt: "Vừa xong",
-      stepsHistory: [
-        { timestamp: "Vừa xong", label: "Tiếp nhận yêu cầu chuyển đổi", status: "done" },
-        {
-          timestamp: "Vừa xong",
-          label: "Cấu hình phạm vi và các mức tỷ lệ",
-          status: "in_progress",
-        },
-      ],
-    };
-    setTasks([newTask, ...tasks]);
     setOpenCreateModal(false);
   };
 
@@ -314,14 +134,13 @@ export function PipelinePage() {
           <Button
             variant="outlined"
             startIcon={<RefreshCw size={16} />}
-            onClick={() => setTasks([...tasks])}
           >
             Làm mới trạng thái
           </Button>
           <Button
             variant="contained"
             startIcon={<Play size={16} />}
-            onClick={() => setOpenCreateModal(true)}
+            disabled
           >
             Tạo tác vụ chuyển đổi
           </Button>
@@ -602,17 +421,8 @@ export function PipelinePage() {
                 label="Dữ liệu nguồn"
                 onChange={(e) => setFormDataset(e.target.value)}
               >
-                <MenuItem value="Ảnh vệ tinh Đà Nẵng 2026 (1m)">
-                  Ảnh vệ tinh Đà Nẵng 2026 (1m) — v1.0 (850 MB)
-                </MenuItem>
-                <MenuItem value="Ảnh vệ tinh Hà Nội 2026 (0.5m)">
-                  Ảnh vệ tinh Hà Nội 2026 (0.5m) — v2.1 (1.42 GB)
-                </MenuItem>
-                <MenuItem value="Ranh giới hành chính Việt Nam (Bộ TN&MT)">
-                  Ranh giới hành chính Việt Nam — v1.4 (480 MB)
-                </MenuItem>
-                <MenuItem value="Mô hình số độ cao DEM Tây Nguyên 30m">
-                  DEM Tây Nguyên 30m — v1.0 (2.8 GB)
+                <MenuItem value="" disabled>
+                  Chưa có dữ liệu nguồn. Hãy tải dữ liệu lên trước.
                 </MenuItem>
               </Select>
             </FormControl>
@@ -675,7 +485,12 @@ export function PipelinePage() {
           <Button variant="outlined" onClick={() => setOpenCreateModal(false)}>
             Hủy
           </Button>
-          <Button variant="contained" startIcon={<Play size={16} />} onClick={handleCreateTask}>
+          <Button
+            variant="contained"
+            startIcon={<Play size={16} />}
+            disabled={!formDataset}
+            onClick={handleCreateTask}
+          >
             Bắt đầu chuyển đổi
           </Button>
         </DialogActions>

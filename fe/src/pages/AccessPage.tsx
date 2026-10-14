@@ -67,92 +67,11 @@ export type AuditLogEntry = {
   details: string;
 };
 
-const initialAcls: PrincipalAcl[] = [
-  {
-    id: "ACL-01",
-    principalType: "user",
-    principalName: "Nguyễn Văn Trung (Kỹ sư GIS)",
-    principalSub: "usr-9f2a-4bc1-9012-e8832a",
-    department: "Trung tâm Nghiên cứu Bản đồ số VHT",
-    grantedReleases: [
-      "Ảnh Vệ Tinh Đô Thị Độ Phân Giải Cao",
-      "Bản đồ Quy Hoạch Hạ Tầng Viễn Thông 2026",
-    ],
-    scope: "view_and_export",
-    grantedBy: "admin@vht.com.vn",
-    grantedAt: "10/10/2026, 09:30",
-    status: "active",
-  },
-  {
-    id: "ACL-02",
-    principalType: "group",
-    principalName: "Ban Vận hành Khai thác Hạ tầng Mạng",
-    principalSub: "grp-net-ops-2026",
-    department: "Khối Hạ tầng Viễn thông",
-    grantedReleases: ["Bản đồ Quy Hoạch Hạ Tầng Viễn Thông 2026"],
-    scope: "view_only",
-    grantedBy: "admin@vht.com.vn",
-    grantedAt: "09/10/2026, 15:20",
-    status: "active",
-  },
-  {
-    id: "ACL-03",
-    principalType: "user",
-    principalName: "Lê Thị Mai (Chuyên viên Phân tích)",
-    principalSub: "usr-3d71-55a2-8901-c7412b",
-    department: "Phòng Quy hoạch & Phân tích Địa không gian",
-    grantedReleases: ["Ảnh Vệ Tinh Đô Thị Độ Phân Giải Cao"],
-    scope: "view_only",
-    grantedBy: "admin@vht.com.vn",
-    grantedAt: "08/10/2026, 11:05",
-    status: "active",
-  },
-];
-
-const initialAuditLogs: AuditLogEntry[] = [
-  {
-    id: "AUD-104",
-    timestamp: "10/10/2026 09:30:15",
-    actor: "admin@vht.com.vn",
-    action: "GRANT",
-    targetPrincipal: "Nguyễn Văn Trung (usr-9f2a-...)",
-    resource: "Ảnh Vệ Tinh Đô Thị (REL-02)",
-    details: "Cấp quyền xem và tải dữ liệu theo yêu cầu dự án số 44/QĐ",
-  },
-  {
-    id: "AUD-103",
-    timestamp: "09/10/2026 15:20:00",
-    actor: "admin@vht.com.vn",
-    action: "GRANT",
-    targetPrincipal: "Ban Vận hành Khai thác (grp-net-ops-2026)",
-    resource: "Bản đồ Quy Hoạch Hạ Tầng Viễn Thông",
-    details: "Gán quyền xem bản đồ cho toàn bộ thành viên nhóm",
-  },
-  {
-    id: "AUD-102",
-    timestamp: "09/10/2026 14:10:44",
-    actor: "gateway-auth-service",
-    action: "ACCESS_DENIED",
-    targetPrincipal: "anonymous-guest-user",
-    resource: "/api/tiles/urban-ortho/14/13421/7210.pbf",
-    details: "Từ chối request: Thiếu JWT Authorization bearer token",
-  },
-  {
-    id: "AUD-101",
-    timestamp: "07/10/2026 16:45:10",
-    actor: "admin@vht.com.vn",
-    action: "REVOKE",
-    targetPrincipal: "Trần Quốc Bảo (usr-expired)",
-    resource: "Tất cả Map Releases restricted",
-    details: "Thu hồi quyền khi nhân sự chuyển công tác",
-  },
-];
-
 export function AccessPage() {
   const { t } = useI18n();
   const [tabIndex, setTabIndex] = useState(0);
-  const [acls, setAcls] = useState<PrincipalAcl[]>(initialAcls);
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(initialAuditLogs);
+  const [acls] = useState<PrincipalAcl[]>([]);
+  const [auditLogs] = useState<AuditLogEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [openGrantModal, setOpenGrantModal] = useState(false);
 
@@ -161,61 +80,15 @@ export function AccessPage() {
   const [formName, setFormName] = useState("");
   const [formSub, setFormSub] = useState("");
   const [formDepartment, setFormDepartment] = useState("");
-  const [formRelease, setFormRelease] = useState("Ảnh Vệ Tinh Đô Thị Độ Phân Giải Cao");
+  const [formRelease, setFormRelease] = useState("");
   const [formScope, setFormScope] = useState<"view_only" | "view_and_export">("view_only");
   const [formNote, setFormNote] = useState("");
 
   const handleGrantAccess = () => {
-    if (!formName || !formSub) return;
-    const newAcl: PrincipalAcl = {
-      id: `ACL-${String(acls.length + 1).padStart(2, "0")}`,
-      principalType: formType,
-      principalName: formName,
-      principalSub: formSub,
-      department: formDepartment || "Phòng ban nội bộ",
-      grantedReleases: [formRelease],
-      scope: formScope,
-      grantedBy: "admin@vht.com.vn",
-      grantedAt: new Date().toLocaleString("vi-VN"),
-      status: "active",
-    };
-
-    const newAudit: AuditLogEntry = {
-      id: `AUD-${String(auditLogs.length + 105)}`,
-      timestamp: new Date().toLocaleString("vi-VN"),
-      actor: "admin@vht.com.vn",
-      action: "GRANT",
-      targetPrincipal: `${formName} (${formSub})`,
-      resource: formRelease,
-      details: formNote || "Cấp quyền truy cập mới từ giao diện Geodata Control",
-    };
-
-    setAcls([newAcl, ...acls]);
-    setAuditLogs([newAudit, ...auditLogs]);
     setOpenGrantModal(false);
-    setFormName("");
-    setFormSub("");
-    setFormDepartment("");
-    setFormNote("");
   };
 
-  const handleRevoke = (id: string) => {
-    const target = acls.find((a) => a.id === id);
-    if (!target) return;
-
-    setAcls((prev) => prev.map((a) => (a.id === id ? { ...a, status: "revoked" as const } : a)));
-
-    const revokeAudit: AuditLogEntry = {
-      id: `AUD-${String(auditLogs.length + 105)}`,
-      timestamp: new Date().toLocaleString("vi-VN"),
-      actor: "admin@vht.com.vn",
-      action: "REVOKE",
-      targetPrincipal: `${target.principalName} (${target.principalSub})`,
-      resource: target.grantedReleases.join(", "),
-      details: "Thu hồi quyền truy cập. Hiệu lực tức thì với các request tile tiếp theo (FR-36).",
-    };
-    setAuditLogs([revokeAudit, ...auditLogs]);
-  };
+  const handleRevoke = (_id: string) => undefined;
 
   const filteredAcls = acls.filter((a) => {
     const matchesTab =
@@ -266,7 +139,7 @@ export function AccessPage() {
           <Button
             variant="contained"
             startIcon={<Plus size={16} />}
-            onClick={() => setOpenGrantModal(true)}
+            disabled
           >
             Cấp quyền truy cập mới
           </Button>
@@ -659,14 +532,8 @@ export function AccessPage() {
                 label="Chọn Map Release cần cấp quyền"
                 onChange={(e) => setFormRelease(e.target.value)}
               >
-                <MenuItem value="Ảnh Vệ Tinh Đô Thị Độ Phân Giải Cao">
-                  Ảnh Vệ Tinh Đô Thị Độ Phân Giải Cao (Restricted)
-                </MenuItem>
-                <MenuItem value="Bản đồ Quy Hoạch Hạ Tầng Viễn Thông 2026">
-                  Bản đồ Quy Hoạch Hạ Tầng Viễn Thông 2026 (Restricted)
-                </MenuItem>
-                <MenuItem value="Bản đồ Nền Quốc Gia Chuẩn (Vector)">
-                  Bản đồ Nền Quốc Gia Chuẩn (Vector) (Public)
+                <MenuItem value="" disabled>
+                  Chưa có Map Release để cấp quyền.
                 </MenuItem>
               </Select>
             </FormControl>

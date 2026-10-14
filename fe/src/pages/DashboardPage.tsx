@@ -37,28 +37,28 @@ export function DashboardPage() {
         <MetricCard
           icon={<Database size={20} />}
           label={t("dashboard.datasets")}
-          value="4 datasets"
+          value="0"
           subtitle={t("dashboard.datasetsDetail")}
           tone="primary"
         />
         <MetricCard
           icon={<Workflow size={20} />}
           label={t("dashboard.jobs")}
-          value="1 đang chạy / 4"
+          value="0"
           subtitle={t("dashboard.jobsDetail")}
           tone="teal"
         />
         <MetricCard
           icon={<HardDrive size={20} />}
           label={t("dashboard.rawStorage")}
-          value="Lưu trữ riêng tư"
+          value="Chưa có dữ liệu"
           subtitle={t("dashboard.rawStorageDetail")}
           tone="amber"
         />
         <MetricCard
           icon={<Layers size={20} />}
           label={t("dashboard.releases")}
-          value="3 Live Releases"
+          value="0"
           subtitle={t("dashboard.releasesDetail")}
           tone="slate"
         />
@@ -78,13 +78,13 @@ export function DashboardPage() {
           {t("dashboard.health")}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ fontSize: "0.875rem", mb: 2.5 }}>
-          Tổng quan mức sẵn sàng của các dịch vụ lõi vận hành dữ liệu bản đồ.
+          Trạng thái sẽ được cập nhật khi các dịch vụ thực tế được kết nối.
         </Typography>
 
         <Stack spacing={2}>
-          <HealthRow label={t("dashboard.mapAuth")} state="Sẵn sàng" />
-          <HealthRow label={t("dashboard.storageBackend")} state="Sẵn sàng" />
-          <HealthRow label={t("dashboard.tileGateway")} state="Sẵn sàng" />
+          <HealthRow label={t("dashboard.mapAuth")} state="Chưa kết nối" />
+          <HealthRow label={t("dashboard.storageBackend")} state="Chưa kết nối" />
+          <HealthRow label={t("dashboard.tileGateway")} state="Chưa kết nối" />
         </Stack>
 
         <Box sx={{ mt: 3, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
@@ -192,8 +192,8 @@ function HealthRow({ label, state }: { label: string; state: string }) {
             width: 8,
             height: 8,
             borderRadius: "50%",
-            bgcolor: "success.main",
-            boxShadow: "0 0 0 3px rgba(34, 197, 94, 0.15)",
+            bgcolor: "text.disabled",
+            boxShadow: "0 0 0 3px rgba(100, 116, 139, 0.15)",
           }}
         />
         <Typography variant="body2" sx={{ fontSize: "0.9375rem", fontWeight: 600 }}>
@@ -204,7 +204,7 @@ function HealthRow({ label, state }: { label: string; state: string }) {
       <Typography
         variant="caption"
         sx={{
-          color: "success.main",
+          color: "text.secondary",
           fontWeight: 700,
           fontSize: "0.8125rem",
         }}

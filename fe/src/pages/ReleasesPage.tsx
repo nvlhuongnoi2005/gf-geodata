@@ -62,71 +62,9 @@ export type MapRelease = {
   tileJsonUrl: string;
 };
 
-const initialReleases: MapRelease[] = [
-  {
-    id: "REL-01",
-    name: "Bản đồ Nền Quốc Gia Chuẩn (Vector)",
-    slug: "vietnam-national-vector",
-    description:
-      "Bản đồ nền vector tổng hợp toàn quốc từ OpenStreetMap kết hợp ranh giới chính thức",
-    version: "v2.1",
-    previousVersion: "v2.0",
-    status: "published",
-    visibility: "public",
-    basemapStyle: "OSM Vietnam Vector (v2.1)",
-    overlays: ["Ranh giới hành chính 3 cấp (v1.4)", "Hệ thống đường bộ cao tốc (v1.0)"],
-    updatedAt: "10/10/2026",
-    publishedAt: "10/10/2026, 14:30",
-    tileJsonUrl: "/api/tiles/vietnam-national-vector/tilejson.json",
-  },
-  {
-    id: "REL-02",
-    name: "Ảnh Vệ Tinh Đô Thị Độ Phân Giải Cao",
-    slug: "urban-ortho-hanoi-danang",
-    description:
-      "Bộ ảnh trực giao 0.5m vùng đô thị phục vụ phân tích quy hoạch và giám sát hạ tầng",
-    version: "v1.3",
-    previousVersion: "v1.2",
-    status: "published",
-    visibility: "restricted",
-    basemapStyle: "Satellite Ortho Imagery (v1.3)",
-    overlays: ["Lớp ranh giới thửa đất quy hoạch (v1.1)"],
-    updatedAt: "08/10/2026",
-    publishedAt: "08/10/2026, 09:15",
-    tileJsonUrl: "/api/tiles/urban-ortho/tilejson.json",
-  },
-  {
-    id: "REL-03",
-    name: "Bản đồ Địa Hình & Mô Hình Độ Cao Hillshade",
-    slug: "terrain-elevation-relief",
-    description: "Mô hình số độ cao DEM dạng Hillshade Terrarium kết hợp đường đồng mức",
-    version: "v1.0",
-    status: "published",
-    visibility: "authenticated",
-    basemapStyle: "Hillshade Relief Map (v1.0)",
-    overlays: ["Đường bình độ 20m (v1.0)"],
-    updatedAt: "05/10/2026",
-    publishedAt: "05/10/2026, 11:00",
-    tileJsonUrl: "/api/tiles/terrain-elevation/tilejson.json",
-  },
-  {
-    id: "REL-04",
-    name: "Bản đồ Quy Hoạch Hạ Tầng Viễn Thông 2026",
-    slug: "telecom-infrastructure-plan",
-    description: "Bản đồ vị trí trạm thu phát sóng và tuyến cáp quang nội bộ bảo mật",
-    version: "v1.0-draft",
-    status: "draft",
-    visibility: "restricted",
-    basemapStyle: "Dark Canvas Basemap (v1.0)",
-    overlays: ["Vị trí BTS toàn quốc (v0.9)", "Tuyến trục truyền dẫn (v0.9)"],
-    updatedAt: "Hôm nay, 08:30",
-    tileJsonUrl: "/api/tiles/telecom-draft/tilejson.json",
-  },
-];
-
 export function ReleasesPage() {
   const { t } = useI18n();
-  const [releases, setReleases] = useState<MapRelease[]>(initialReleases);
+  const [releases] = useState<MapRelease[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [visibilityFilter, setVisibilityFilter] = useState("all");
   const [openCreateModal, setOpenCreateModal] = useState(false);
@@ -137,13 +75,11 @@ export function ReleasesPage() {
   const [formName, setFormName] = useState("");
   const [formSlug, setFormSlug] = useState("");
   const [formDescription, setFormDescription] = useState("");
-  const [formBasemap, setFormBasemap] = useState("OSM Vietnam Vector (v2.1)");
+  const [formBasemap, setFormBasemap] = useState("");
   const [formVisibility, setFormVisibility] = useState<"public" | "authenticated" | "restricted">(
     "authenticated"
   );
-  const [selectedOverlays, setSelectedOverlays] = useState<string[]>([
-    "Ranh giới hành chính 3 cấp (v1.4)",
-  ]);
+  const [selectedOverlays, setSelectedOverlays] = useState<string[]>([]);
 
   const handleNameChange = (name: string) => {
     setFormName(name);
@@ -158,60 +94,11 @@ export function ReleasesPage() {
   };
 
   const handleCreateRelease = () => {
-    if (!formName || !formSlug) return;
-    const newRelease: MapRelease = {
-      id: `REL-${String(releases.length + 1).padStart(2, "0")}`,
-      name: formName,
-      slug: formSlug,
-      description: formDescription || "Bản phát hành bản đồ mới",
-      version: "v1.0",
-      status: "published",
-      visibility: formVisibility,
-      basemapStyle: formBasemap,
-      overlays: selectedOverlays,
-      updatedAt: "Vừa xong",
-      publishedAt: new Date().toLocaleString("vi-VN"),
-      tileJsonUrl: `/api/tiles/${formSlug}/tilejson.json`,
-    };
-    setReleases([newRelease, ...releases]);
     setOpenCreateModal(false);
-    setFormName("");
-    setFormSlug("");
-    setFormDescription("");
   };
 
-  const handleTogglePublish = (id: string) => {
-    setReleases((prev) =>
-      prev.map((r) => {
-        if (r.id === id) {
-          const nextStatus = r.status === "published" ? "draft" : "published";
-          return {
-            ...r,
-            status: nextStatus,
-            publishedAt:
-              nextStatus === "published" ? new Date().toLocaleString("vi-VN") : undefined,
-          };
-        }
-        return r;
-      })
-    );
-  };
-
-  const handleRollback = (id: string) => {
-    setReleases((prev) =>
-      prev.map((r) => {
-        if (r.id === id && r.previousVersion) {
-          return {
-            ...r,
-            version: r.previousVersion,
-            updatedAt: "Vừa rollback",
-            publishedAt: new Date().toLocaleString("vi-VN"),
-          };
-        }
-        return r;
-      })
-    );
-  };
+  const handleTogglePublish = (_id: string) => undefined;
+  const handleRollback = (_id: string) => undefined;
 
   const handleCopyUrl = (url: string) => {
     void navigator.clipboard.writeText(window.location.origin + url);
@@ -261,7 +148,7 @@ export function ReleasesPage() {
           <Button
             variant="contained"
             startIcon={<Plus size={16} />}
-            onClick={() => setOpenCreateModal(true)}
+            disabled
           >
             Tạo bản phát hành mới
           </Button>
@@ -653,17 +540,8 @@ export function ReleasesPage() {
                 label="Style Basemap chính"
                 onChange={(e) => setFormBasemap(e.target.value)}
               >
-                <MenuItem value="OSM Vietnam Vector (v2.1)">
-                  OSM Vietnam Vector (v2.1) — MapLibre Vector
-                </MenuItem>
-                <MenuItem value="Satellite Ortho Imagery (v1.3)">
-                  Satellite Ortho Imagery (v1.3) — Ảnh vệ tinh GeoTIFF
-                </MenuItem>
-                <MenuItem value="Dark Canvas Basemap (v1.0)">
-                  Dark Canvas Basemap (v1.0) — Nền tối chuyên dụng
-                </MenuItem>
-                <MenuItem value="Hillshade Relief Map (v1.0)">
-                  Hillshade Relief Map (v1.0) — Địa hình nổi 3D
+                <MenuItem value="" disabled>
+                  Chưa có style basemap.
                 </MenuItem>
               </Select>
             </FormControl>
@@ -672,32 +550,9 @@ export function ReleasesPage() {
               <Typography variant="caption" sx={{ fontWeight: 700, display: "block", mb: 0.5 }}>
                 Chọn các lớp Overlay bổ trợ:
               </Typography>
-              <FormGroup>
-                {[
-                  "Ranh giới hành chính 3 cấp (v1.4)",
-                  "Hệ thống đường bộ cao tốc (v1.0)",
-                  "Lớp ranh giới thửa đất quy hoạch (v1.1)",
-                  "Vị trí BTS viễn thông (v0.9)",
-                ].map((overlay) => (
-                  <FormControlLabel
-                    key={overlay}
-                    control={
-                      <Checkbox
-                        size="small"
-                        checked={selectedOverlays.includes(overlay)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedOverlays([...selectedOverlays, overlay]);
-                          } else {
-                            setSelectedOverlays(selectedOverlays.filter((o) => o !== overlay));
-                          }
-                        }}
-                      />
-                    }
-                    label={<Typography variant="body2">{overlay}</Typography>}
-                  />
-                ))}
-              </FormGroup>
+              <Typography variant="body2" color="text.secondary">
+                Chưa có overlay để lựa chọn.
+              </Typography>
             </Box>
 
             <FormControl fullWidth size="small">

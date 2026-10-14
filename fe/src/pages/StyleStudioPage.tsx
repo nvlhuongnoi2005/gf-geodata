@@ -41,116 +41,26 @@ import {
 import { Map, NavigationControl, type StyleSpecification } from "maplibre-gl";
 import { useI18n } from "../i18n";
 
-// Preset Styles for quick preview and editing
-const stylePresets: Record<string, StyleSpecification> = {
-  osm_vector: {
-    version: 8,
-    name: "OpenStreetMap Vietnam Vector (v2.1)",
-    center: [105.8278, 21.0312],
-    zoom: 11,
-    sources: {
-      osm_open: {
-        type: "raster",
-        tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-        tileSize: 256,
-        attribution: "© OpenStreetMap contributors",
-      },
-    },
-    layers: [
-      {
-        id: "osm-raster-base",
-        type: "raster",
-        source: "osm_open",
-        paint: { "raster-opacity": 1.0 },
-      },
-    ],
-  },
-  dark_spatial: {
-    version: 8,
-    name: "Dark Canvas Geospatial (v1.0)",
-    center: [105.8278, 21.0312],
-    zoom: 11,
-    sources: {
-      carto_dark: {
-        type: "raster",
-        tiles: [
-          "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-          "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-        ],
-        tileSize: 256,
-        attribution: "© CARTO, © OpenStreetMap",
-      },
-    },
-    layers: [
-      {
-        id: "background-dark",
-        type: "background",
-        paint: { "background-color": "#0b1218" },
-      },
-      {
-        id: "carto-dark-base",
-        type: "raster",
-        source: "carto_dark",
-        paint: { "raster-opacity": 0.85 },
-      },
-    ],
-  },
-  satellite_hybrid: {
-    version: 8,
-    name: "Satellite Ortho & Hybrid (v1.3)",
-    center: [105.8278, 21.0312],
-    zoom: 11,
-    sources: {
-      satellite: {
-        type: "raster",
-        tiles: [
-          "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        ],
-        tileSize: 256,
-        attribution: "Esri, Maxar, Earthstar Geographics",
-      },
-    },
-    layers: [
-      {
-        id: "satellite-layer",
-        type: "raster",
-        source: "satellite",
-        paint: { "raster-opacity": 1.0 },
-      },
-    ],
-  },
-  minimal_vector: {
-    version: 8,
-    name: "Draft Blank Basemap (v1.0)",
-    center: [105.85, 21.03],
-    zoom: 6,
-    sources: {},
-    layers: [
-      {
-        id: "background",
-        type: "background",
-        paint: { "background-color": "#0d9488" },
-      },
-    ],
-  },
+const emptyStyle: StyleSpecification = {
+  version: 8,
+  sources: {},
+  layers: [{ id: "background", type: "background", paint: { "background-color": "#f8fafc" } }],
 };
 
 export function StyleStudioPage() {
   const { t } = useI18n();
-  const [selectedPreset, setSelectedPreset] = useState("osm_vector");
-  const [source, setSource] = useState(() => JSON.stringify(stylePresets.osm_vector, null, 2));
+  const [selectedPreset, setSelectedPreset] = useState("empty");
+  const [source, setSource] = useState(() => JSON.stringify(emptyStyle, null, 2));
   const [appliedSource, setAppliedSource] = useState(() =>
-    JSON.stringify(stylePresets.osm_vector, null, 2)
+    JSON.stringify(emptyStyle, null, 2)
   );
   const [error, setError] = useState<string | null>(null);
-  const [currentZoom, setCurrentZoom] = useState(11);
-  const [currentCenter, setCurrentCenter] = useState<[number, number]>([105.8278, 21.0312]);
+  const [currentZoom, setCurrentZoom] = useState(0);
+  const [currentCenter, setCurrentCenter] = useState<[number, number]>([0, 0]);
   const [layerDrawerOpen, setLayerDrawerOpen] = useState(false);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
-  const [saveVersionTag, setSaveVersionTag] = useState("v2.2");
-  const [saveComment, setSaveComment] = useState(
-    "Tối ưu hóa bảng màu đường bộ và độ tương phản nhãn"
-  );
+  const [saveVersionTag, setSaveVersionTag] = useState("");
+  const [saveComment, setSaveComment] = useState("");
   const [saveSuccessNotice, setSaveSuccessNotice] = useState(false);
 
   const mapNode = useRef<HTMLDivElement | null>(null);
@@ -164,8 +74,8 @@ export function StyleStudioPage() {
       map.current = new Map({
         container: mapNode.current,
         style: initialParsed,
-        center: [105.8278, 21.0312],
-        zoom: 11,
+        center: [0, 0],
+        zoom: 0,
       });
 
       map.current.addControl(new NavigationControl({ visualizePitch: true }), "top-right");
@@ -198,27 +108,13 @@ export function StyleStudioPage() {
     }
   };
 
-  // Change preset
-  const handleSelectPreset = (presetKey: string) => {
-    setSelectedPreset(presetKey);
-    const presetObj = stylePresets[presetKey];
-    if (presetObj) {
-      const formatted = JSON.stringify(presetObj, null, 2);
-      setSource(formatted);
-      try {
-        map.current?.setStyle(presetObj, { diff: false });
-        if (presetObj.center) {
-          map.current?.flyTo({
-            center: presetObj.center as [number, number],
-            zoom: presetObj.zoom || 10,
-          });
-        }
-        setAppliedSource(formatted);
-        setError(null);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Lỗi nạp style");
-      }
-    }
+  const handleSelectPreset = () => {
+    const formatted = JSON.stringify(emptyStyle, null, 2);
+    setSelectedPreset("empty");
+    setSource(formatted);
+    map.current?.setStyle(emptyStyle, { diff: false });
+    setAppliedSource(formatted);
+    setError(null);
   };
 
   // Apply preview
@@ -294,7 +190,7 @@ export function StyleStudioPage() {
           <Button
             variant="contained"
             startIcon={<Save size={17} />}
-            onClick={() => setSaveModalOpen(true)}
+            disabled
           >
             {t("style.save")}
           </Button>
@@ -318,12 +214,9 @@ export function StyleStudioPage() {
               <Select
                 value={selectedPreset}
                 label="Mẫu Style có sẵn (Preset)"
-                onChange={(e) => handleSelectPreset(e.target.value)}
+                onChange={handleSelectPreset}
               >
-                <MenuItem value="osm_vector">OpenStreetMap Vietnam (Vector)</MenuItem>
-                <MenuItem value="dark_spatial">Dark Canvas Geospatial (Nền tối)</MenuItem>
-                <MenuItem value="satellite_hybrid">Satellite Imagery (Ảnh vệ tinh)</MenuItem>
-                <MenuItem value="minimal_vector">Blank Basemap (Bản đồ trống)</MenuItem>
+                <MenuItem value="empty">Style trống</MenuItem>
               </Select>
             </FormControl>
 
@@ -346,24 +239,6 @@ export function StyleStudioPage() {
             </Button>
           </Stack>
 
-          {/* Location quick jumps */}
-          <Stack direction="row" spacing={0.8} sx={{ alignItems: "center" }}>
-            <Typography variant="caption" color="text.secondary">
-              Nhảy nhanh:
-            </Typography>
-            <Button size="small" variant="text" onClick={() => flyTo(105.8278, 21.0312, 12)}>
-              Hà Nội
-            </Button>
-            <Button size="small" variant="text" onClick={() => flyTo(108.2208, 16.0678, 12)}>
-              Đà Nẵng
-            </Button>
-            <Button size="small" variant="text" onClick={() => flyTo(106.6998, 10.7765, 12)}>
-              TP.HCM
-            </Button>
-            <Button size="small" variant="text" onClick={() => flyTo(108.0, 16.0, 5.5)}>
-              Toàn quốc
-            </Button>
-          </Stack>
         </Stack>
       </Paper>
 
