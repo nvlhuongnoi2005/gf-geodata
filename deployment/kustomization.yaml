@@ -3,6 +3,4 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - frontend
-  - database
-  - api
 

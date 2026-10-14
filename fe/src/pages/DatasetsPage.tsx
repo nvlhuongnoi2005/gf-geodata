@@ -13,11 +13,9 @@ import {
   Typography,
 } from "@mui/material";
 import { Database, FileUp, ShieldCheck, UploadCloud } from "lucide-react";
-import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 
 const acceptedFileTypes = ".osm.pbf,.tif,.tiff,.gpkg,.zip,.mbtiles";
-const uploadEndpoint = import.meta.env.VITE_GEODATA_UPLOAD_URL;
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -26,41 +24,13 @@ function formatFileSize(bytes: number): string {
 
 export function DatasetsPage() {
   const { t } = useI18n();
-  const { accessToken } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadPanelOpen, setUploadPanelOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState<"idle" | "success" | "error">("idle");
 
   const openUploadPanel = () => {
     setSelectedFile(null);
-    setUploadStatus("idle");
     setUploadPanelOpen(true);
-  };
-
-  const startUpload = async () => {
-    if (!selectedFile || !uploadEndpoint) return;
-
-    setUploading(true);
-    setUploadStatus("idle");
-    const body = new FormData();
-    body.append("file", selectedFile);
-
-    try {
-      const response = await fetch(uploadEndpoint, {
-        method: "POST",
-        body,
-        credentials: "include",
-        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
-      });
-      if (!response.ok) throw new Error("Upload failed");
-      setUploadStatus("success");
-    } catch {
-      setUploadStatus("error");
-    } finally {
-      setUploading(false);
-    }
   };
 
   return (
@@ -203,13 +173,7 @@ export function DatasetsPage() {
               onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
             />
 
-            {!uploadEndpoint && <Alert severity="info">{t("datasets.uploadApiRequired")}</Alert>}
-            {uploadStatus === "success" && (
-              <Alert severity="success">{t("datasets.uploadSucceeded")}</Alert>
-            )}
-            {uploadStatus === "error" && (
-              <Alert severity="error">{t("datasets.uploadFailed")}</Alert>
-            )}
+            <Alert severity="info">{t("datasets.uploadApiRequired")}</Alert>
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
@@ -218,9 +182,8 @@ export function DatasetsPage() {
           </Button>
           <Button
             variant="contained"
-            disabled={!selectedFile || !uploadEndpoint || uploading}
+            disabled
             startIcon={<UploadCloud size={16} />}
-            onClick={() => void startUpload()}
           >
             {t("datasets.startUpload")}
           </Button>

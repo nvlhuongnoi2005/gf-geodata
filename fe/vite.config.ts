@@ -23,8 +23,7 @@ export default defineConfig(({ mode }) => {
     optimizeDeps: { exclude: ["maplibre-gl"] },
     server: {
       proxy: {
-        "/auth": { target: authTarget, changeOrigin: true },
-        "/api/geodata": { target: env.VITE_GEODATA_API_URL || "http://localhost:8090", changeOrigin: true }
+        "/auth": { target: authTarget, changeOrigin: true }
       }
     }
   };

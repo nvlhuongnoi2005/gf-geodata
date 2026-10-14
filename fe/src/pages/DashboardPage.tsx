@@ -1,8 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Box, Paper, Stack, Typography } from "@mui/material";
 import { Database, HardDrive, Layers, Workflow } from "lucide-react";
 import { useI18n } from "../i18n";
-import { useAuth } from "../auth";
 
 type ServiceState = "ready" | "degraded" | "unavailable";
 type Summary = {
@@ -24,29 +23,7 @@ function getServiceState(summary: Summary | null, name: Summary["services"][numb
 
 export function DashboardPage() {
   const { t } = useI18n();
-  const { accessToken } = useAuth();
-  const [summary, setSummary] = useState<Summary | null>(null);
-
-  useEffect(() => {
-    const controller = new AbortController();
-
-    const loadSummary = async () => {
-      try {
-        const response = await fetch("/api/geodata/v1/summary", {
-          credentials: "include",
-          headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error("Summary unavailable");
-        setSummary((await response.json()) as Summary);
-      } catch (error) {
-        if (!(error instanceof DOMException && error.name === "AbortError")) setSummary(null);
-      }
-    };
-
-    void loadSummary();
-    return () => controller.abort();
-  }, [accessToken]);
+  const [summary] = useState<Summary | null>(null);
 
   const authState = getServiceState(summary, "authentication");
   const storageState = getServiceState(summary, "storage");
