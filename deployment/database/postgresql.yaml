@@ -35,9 +35,11 @@ spec:
         app.kubernetes.io/name: geodata-postgresql
         app.kubernetes.io/part-of: tile-server
     spec:
+      imagePullSecrets:
+        - name: ghcr-pull
       containers:
         - name: postgresql
-          image: registry.internal/base/postgres:16.11-alpine
+          image: ghcr.io/nvlhuongnoi2005/tile-server/postgres:16
           imagePullPolicy: IfNotPresent
           ports:
             - name: postgresql

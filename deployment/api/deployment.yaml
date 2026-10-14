@@ -10,13 +10,13 @@ spec:
       imagePullSecrets: [{ name: ghcr-pull }]
       initContainers:
         - name: migrate
-          image: registry.internal/geodata/api:dev
+          image: ghcr.io/nvlhuongnoi2005/tile-server/geodata-api:dev
           imagePullPolicy: Always
           command: ["/usr/local/bin/geodata-migrate"]
           envFrom: [{ secretRef: { name: geodata-api } }]
       containers:
         - name: api
-          image: registry.internal/geodata/api:dev
+          image: ghcr.io/nvlhuongnoi2005/tile-server/geodata-api:dev
           ports: [{ name: http, containerPort: 8090 }]
           envFrom: [{ secretRef: { name: geodata-api } }]
           readinessProbe: { httpGet: { path: /healthz, port: http } }

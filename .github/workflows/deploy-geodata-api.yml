@@ -48,9 +48,24 @@ jobs:
           push: true
           tags: ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
       - name: Configure cluster access
+        env:
+          KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
         run: |
+          if [ -z "$KUBE_CONFIG_DATA" ]; then
+            echo "KUBE_CONFIG_DATA is empty or unavailable to this workflow" >&2
+            exit 1
+          fi
           mkdir -p "$HOME/.kube"
-          echo "${{ secrets.KUBE_CONFIG_DATA }}" | base64 --decode > "$HOME/.kube/config"
+          printf '%s' "$KUBE_CONFIG_DATA" | base64 --decode > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+          kubectl config current-context > /dev/null
+          cluster_server="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
+          if [ -z "$cluster_server" ] || [ "$cluster_server" = "http://localhost:8080" ]; then
+            echo "Kubeconfig has no valid cluster server" >&2
+            exit 1
+          fi
+      - name: Verify cluster access
+        run: kubectl --request-timeout=10s get --raw=/version > /dev/null
       - name: Apply database and API manifests
         run: kubectl apply -k deployment
       - name: Roll out migration and API
