@@ -33,6 +33,9 @@ $adminKey = [BitConverter]::ToString($adminKeyBytes).Replace('-', '')
 $adminSecret = [Convert]::ToBase64String($adminSecretBytes)
 $uploadKey = [BitConverter]::ToString($uploadKeyBytes).Replace('-', '')
 $uploadSecret = [Convert]::ToBase64String($uploadSecretBytes)
+if ([string]::IsNullOrWhiteSpace($adminKey) -or [string]::IsNullOrWhiteSpace($adminSecret) -or [string]::IsNullOrWhiteSpace($uploadKey) -or [string]::IsNullOrWhiteSpace($uploadSecret)) {
+  throw 'Generated S3 credential is empty; no Secret was created.'
+}
 $config = @{
   identities = @(
     @{ name = 'bootstrap-admin'; credentials = @(@{ accessKey = $adminKey; secretKey = $adminSecret }); actions = @('Admin','Read','Write','List','Tagging') },
@@ -49,6 +52,11 @@ try {
 }
 kubectl -n storage create secret generic geodata-s3-bootstrap --from-literal="access-key=$adminKey" --from-literal="secret-key=$adminSecret" --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n tile-server create secret generic geodata-upload-s3 --from-literal="access-key=$uploadKey" --from-literal="secret-key=$uploadSecret" --dry-run=client -o yaml | kubectl apply -f -
+
+$bootstrapSecret = kubectl -n storage get secret geodata-s3-bootstrap -o json | ConvertFrom-Json
+if ($bootstrapSecret.data.'access-key'.Length -eq 0 -or $bootstrapSecret.data.'secret-key'.Length -eq 0) {
+  throw 'Bootstrap Secret contains an empty key; stop and recreate it before deploying.'
+}
 ```
 
 If either S3 credential Secret was accidentally created with blank values,
