@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: geodata-postgresql
+  namespace: tile-server
+  labels:
+    app.kubernetes.io/name: geodata-postgresql
+    app.kubernetes.io/part-of: tile-server
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: geodata-postgresql
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: postgresql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: geodata-postgresql
+  namespace: tile-server
+  labels:
+    app.kubernetes.io/name: geodata-postgresql
+    app.kubernetes.io/part-of: tile-server
+spec:
+  serviceName: geodata-postgresql
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: geodata-postgresql
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: geodata-postgresql
+        app.kubernetes.io/part-of: tile-server
+    spec:
+      containers:
+        - name: postgresql
+          image: registry.internal/base/postgres:16.11-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgresql
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: geodata
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef: { name: geodata-postgresql, key: username }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: geodata-postgresql, key: password }
+          readinessProbe:
+            exec: { command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"] }
+          livenessProbe:
+            exec: { command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"] }
+          volumeMounts: [{ name: data, mountPath: /var/lib/postgresql/data }]
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "2", memory: 2Gi }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 100Gi } }

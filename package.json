@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --config fe/vite.config.ts",
     "build": "tsc -b && vite build --config fe/vite.config.ts",
+    "api:build": "cd api && go build ./cmd/geodata-api",
     "preview": "vite preview --config fe/vite.config.ts",
     "format": "prettier --write \"fe/src/**/*.{ts,tsx,css,json}\" \"*.{ts,json}\"",
     "format:check": "prettier --check \"fe/src/**/*.{ts,tsx,css,json}\" \"*.{ts,json}\""
