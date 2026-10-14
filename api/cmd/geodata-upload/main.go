@@ -40,8 +40,16 @@ type conversionJobListResponse struct {
 type conversionArtifactListResponse struct {
 	Items []catalog.ConversionArtifactView `json:"items"`
 }
-type createReleaseRequest struct { Name string `json:"name"`; Slug string `json:"slug"`; Description string `json:"description"`; Visibility string `json:"visibility"`; ArtifactIDs []string `json:"artifactIds"` }
-type releaseListResponse struct { Items []catalog.MapRelease `json:"items"` }
+type createReleaseRequest struct {
+	Name        string   `json:"name"`
+	Slug        string   `json:"slug"`
+	Description string   `json:"description"`
+	Visibility  string   `json:"visibility"`
+	ArtifactIDs []string `json:"artifactIds"`
+}
+type releaseListResponse struct {
+	Items []catalog.MapRelease `json:"items"`
+}
 
 type tileJSONResponse struct {
 	TileJSON     string                `json:"tilejson"`
@@ -181,6 +189,8 @@ func main() {
 	mux.Handle("GET /api/geodata/v1/releases", app.requireAdmin(http.HandlerFunc(app.listReleases)))
 	mux.Handle("POST /api/geodata/v1/releases", app.requireAdmin(http.HandlerFunc(app.createRelease)))
 	mux.Handle("POST /api/geodata/v1/releases/{releaseID}/publish", app.requireAdmin(http.HandlerFunc(app.publishRelease)))
+	mux.Handle("POST /api/geodata/v1/releases/{releaseID}/unpublish", app.requireAdmin(http.HandlerFunc(app.unpublishRelease)))
+	mux.Handle("DELETE /api/geodata/v1/releases/{releaseID}", app.requireAdmin(http.HandlerFunc(app.deleteRelease)))
 	address := os.Getenv("HTTP_ADDR")
 	if address == "" {
 		address = ":8090"
@@ -399,10 +409,102 @@ func (s *server) artifactTile(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(tile)
 }
 
-func (s *server) listReleases(w http.ResponseWriter, r *http.Request) { ctx,c:=context.WithTimeout(r.Context(),10*time.Second);defer c();items,err:=s.store.ListReleases(ctx,100);if err!=nil{http.Error(w,"could not load releases",503);return};w.Header().Set("Content-Type","application/json");_ = json.NewEncoder(w).Encode(releaseListResponse{Items:items}) }
-func (s *server) createRelease(w http.ResponseWriter,r *http.Request) { var request createReleaseRequest;r.Body=http.MaxBytesReader(w,r.Body,16*1024);defer r.Body.Close();d:=json.NewDecoder(r.Body);d.DisallowUnknownFields();if d.Decode(&request)!=nil||strings.TrimSpace(request.Name)==""||!validSlug(request.Slug)||len(request.ArtifactIDs)==0||len(request.ArtifactIDs)>20|| (request.Visibility!="public"&&request.Visibility!="authenticated"&&request.Visibility!="restricted"){http.Error(w,"invalid release request",400);return};for _,id:=range request.ArtifactIDs{if !isUUID(id){http.Error(w,"invalid artifact",400);return}};id,err:=newUUID();if err!=nil{http.Error(w,"could not create release",500);return};release:=catalog.MapRelease{ID:id,Name:strings.TrimSpace(request.Name),Slug:request.Slug,Description:strings.TrimSpace(request.Description),Visibility:request.Visibility,Status:"draft",CreatedAt:time.Now().UTC()};ctx,c:=context.WithTimeout(r.Context(),10*time.Second);defer c();if err=s.store.CreateRelease(ctx,release,request.ArtifactIDs);err!=nil{http.Error(w,"could not create release",409);return};w.Header().Set("Content-Type","application/json");w.WriteHeader(201);_ = json.NewEncoder(w).Encode(release) }
-func (s *server) publishRelease(w http.ResponseWriter,r *http.Request) {id:=r.PathValue("releaseID");if !isUUID(id){http.Error(w,"invalid release identifier",400);return};ctx,c:=context.WithTimeout(r.Context(),10*time.Second);defer c();if err:=s.store.StartReleasePublish(ctx,id);err!=nil{http.Error(w,"release is not a draft",409);return};w.WriteHeader(202)}
-func validSlug(value string) bool { if len(value)<1||len(value)>120{return false};for _,r:=range value{if !(r>='a'&&r<='z'||r>='0'&&r<='9'||r=='-'){return false}};return !strings.HasPrefix(value,"-")&&!strings.HasSuffix(value,"-") }
+func (s *server) listReleases(w http.ResponseWriter, r *http.Request) {
+	ctx, c := context.WithTimeout(r.Context(), 10*time.Second)
+	defer c()
+	items, err := s.store.ListReleases(ctx, 100)
+	if err != nil {
+		http.Error(w, "could not load releases", 503)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(releaseListResponse{Items: items})
+}
+func (s *server) createRelease(w http.ResponseWriter, r *http.Request) {
+	var request createReleaseRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
+	defer r.Body.Close()
+	d := json.NewDecoder(r.Body)
+	d.DisallowUnknownFields()
+	if d.Decode(&request) != nil || strings.TrimSpace(request.Name) == "" || !validSlug(request.Slug) || len(request.ArtifactIDs) == 0 || len(request.ArtifactIDs) > 20 || (request.Visibility != "public" && request.Visibility != "authenticated" && request.Visibility != "restricted") {
+		http.Error(w, "invalid release request", 400)
+		return
+	}
+	for _, id := range request.ArtifactIDs {
+		if !isUUID(id) {
+			http.Error(w, "invalid artifact", 400)
+			return
+		}
+	}
+	id, err := newUUID()
+	if err != nil {
+		http.Error(w, "could not create release", 500)
+		return
+	}
+	release := catalog.MapRelease{ID: id, Name: strings.TrimSpace(request.Name), Slug: request.Slug, Description: strings.TrimSpace(request.Description), Visibility: request.Visibility, Status: "draft", CreatedAt: time.Now().UTC()}
+	ctx, c := context.WithTimeout(r.Context(), 10*time.Second)
+	defer c()
+	if err = s.store.CreateRelease(ctx, release, request.ArtifactIDs); err != nil {
+		http.Error(w, "could not create release", 409)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_ = json.NewEncoder(w).Encode(release)
+}
+func (s *server) publishRelease(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("releaseID")
+	if !isUUID(id) {
+		http.Error(w, "invalid release identifier", 400)
+		return
+	}
+	ctx, c := context.WithTimeout(r.Context(), 10*time.Second)
+	defer c()
+	if err := s.store.StartReleasePublish(ctx, id); err != nil {
+		http.Error(w, "release is not a draft", 409)
+		return
+	}
+	w.WriteHeader(202)
+}
+func (s *server) unpublishRelease(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("releaseID")
+	if !isUUID(id) {
+		http.Error(w, "invalid release identifier", 400)
+		return
+	}
+	ctx, c := context.WithTimeout(r.Context(), 10*time.Second)
+	defer c()
+	if err := s.store.UnpublishRelease(ctx, id); err != nil {
+		http.Error(w, "release is not published", 409)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *server) deleteRelease(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("releaseID")
+	if !isUUID(id) {
+		http.Error(w, "invalid release identifier", 400)
+		return
+	}
+	ctx, c := context.WithTimeout(r.Context(), 10*time.Second)
+	defer c()
+	if err := s.store.DeleteRelease(ctx, id); err != nil {
+		http.Error(w, "only an unpublished release can be deleted", 409)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func validSlug(value string) bool {
+	if len(value) < 1 || len(value) > 120 {
+		return false
+	}
+	for _, r := range value {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
+			return false
+		}
+	}
+	return !strings.HasPrefix(value, "-") && !strings.HasSuffix(value, "-")
+}
 
 func (s *server) loadPreviewArtifact(w http.ResponseWriter, r *http.Request) (catalog.ConversionArtifact, string, mbtiles.Metadata, bool) {
 	id := r.PathValue("artifactID")

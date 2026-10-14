@@ -434,6 +434,34 @@ func (s *Store) StartReleasePublish(ctx context.Context, id string) error {
 	return nil
 }
 
+// UnpublishRelease immediately removes a release from the tile gateway by
+// changing it to archived. Published tile objects are retained for safe audit
+// and can be cleaned by a separate retention job.
+func (s *Store) UnpublishRelease(ctx context.Context, id string) error {
+	result, err := s.pool.Exec(ctx, `UPDATE map_releases SET status='archived',updated_at=NOW() WHERE id=$1 AND status='published'`, id)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return ErrConversionJobNotActive
+	}
+	return nil
+}
+
+// DeleteRelease removes a release catalog entry only when it cannot be served.
+// Raw uploads and derived MBTiles are immutable source artifacts and are never
+// deleted as a consequence of deleting a release.
+func (s *Store) DeleteRelease(ctx context.Context, id string) error {
+	result, err := s.pool.Exec(ctx, `DELETE FROM map_releases WHERE id=$1 AND status IN ('draft','failed','archived')`, id)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return ErrConversionJobNotActive
+	}
+	return nil
+}
+
 func (s *Store) ClaimReleasePublish(ctx context.Context) (*MapRelease, []ReleaseArtifact, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
