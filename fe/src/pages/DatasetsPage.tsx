@@ -42,6 +42,9 @@ const dataTypeLabels: Record<DataType, TranslationKey> = {
 };
 const statusLabels: Record<string, TranslationKey> = {
   uploaded: "datasets.status.uploaded",
+  converting: "datasets.status.converting",
+  converted: "datasets.status.converted",
+  failed: "datasets.status.failed",
   rejected: "datasets.status.rejected",
   archived: "datasets.status.archived",
 };
@@ -128,6 +131,8 @@ export function DatasetsPage() {
 
   useEffect(() => {
     void loadUploads();
+    const timer = window.setInterval(() => void loadUploads(), 10_000);
+    return () => window.clearInterval(timer);
   }, [loadUploads]);
 
   const openUploadPanel = () => {

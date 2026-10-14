@@ -72,6 +72,23 @@ type JobCounts struct {
 	Failed  int
 }
 
+// ConversionJobView is safe for the user interface. It contains catalog names
+// and progress state, never S3 keys, credentials, or worker diagnostics.
+type ConversionJobView struct {
+	ID           string     `json:"id"`
+	RawUploadID  string     `json:"rawUploadId"`
+	SourceName   string     `json:"sourceName"`
+	SourceFile   string     `json:"sourceFileName"`
+	SourceFormat string     `json:"sourceFormat"`
+	Status       string     `json:"status"`
+	MinZoom      int        `json:"minZoom"`
+	MaxZoom      int        `json:"maxZoom"`
+	LayerName    string     `json:"layerName,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	StartedAt    *time.Time `json:"startedAt"`
+	FinishedAt   *time.Time `json:"finishedAt"`
+}
+
 type NewRawUpload struct {
 	RawUpload
 	ObjectKey string
@@ -233,6 +250,32 @@ RETURNING id, raw_upload_id, status, min_zoom, max_zoom, COALESCE(layer_name, ''
 		return ConversionJob{}, ErrRawUploadNotFound
 	}
 	return job, err
+}
+
+func (s *Store) ListConversionJobs(ctx context.Context, limit int) ([]ConversionJobView, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT j.id, j.raw_upload_id, r.display_name, r.source_file_name, r.source_format,
+       j.status, j.min_zoom, j.max_zoom, COALESCE(j.layer_name, ''), j.created_at,
+       j.started_at, j.finished_at
+FROM conversion_jobs j
+JOIN raw_uploads r ON r.id = j.raw_upload_id
+ORDER BY j.created_at DESC
+LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]ConversionJobView, 0)
+	for rows.Next() {
+		var item ConversionJobView
+		if err := rows.Scan(&item.ID, &item.RawUploadID, &item.SourceName, &item.SourceFile,
+			&item.SourceFormat, &item.Status, &item.MinZoom, &item.MaxZoom, &item.LayerName,
+			&item.CreatedAt, &item.StartedAt, &item.FinishedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 // ClaimConversionJob atomically reserves one queued job. SKIP LOCKED allows

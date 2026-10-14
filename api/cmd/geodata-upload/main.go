@@ -31,6 +31,10 @@ type uploadListResponse struct {
 	Items []catalog.RawUpload `json:"items"`
 }
 
+type conversionJobListResponse struct {
+	Items []catalog.ConversionJobView `json:"items"`
+}
+
 type createConversionJobRequest struct {
 	RawUploadID string `json:"rawUploadId"`
 	MinZoom     int    `json:"minZoom"`
@@ -143,6 +147,7 @@ func main() {
 	mux.Handle("GET /api/geodata/v1/uploads", app.requireAdmin(http.HandlerFunc(app.listUploads)))
 	mux.Handle("PUT /api/geodata/v1/uploads", app.requireAdmin(http.HandlerFunc(app.upload)))
 	mux.Handle("DELETE /api/geodata/v1/uploads/{uploadID}", app.requireAdmin(http.HandlerFunc(app.deleteUpload)))
+	mux.Handle("GET /api/geodata/v1/jobs", app.requireAdmin(http.HandlerFunc(app.listConversionJobs)))
 	mux.Handle("POST /api/geodata/v1/jobs", app.requireAdmin(http.HandlerFunc(app.createConversionJob)))
 	address := os.Getenv("HTTP_ADDR")
 	if address == "" {
@@ -272,6 +277,28 @@ func (s *server) summary(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+func (s *server) listConversionJobs(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			http.Error(w, "limit must be between 1 and 100", http.StatusBadRequest)
+			return
+		}
+		limit = parsed
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	items, err := s.store.ListConversionJobs(ctx, limit)
+	if err != nil {
+		slog.Error("list conversion jobs", "error", err)
+		http.Error(w, "could not load conversion jobs", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(conversionJobListResponse{Items: items})
 }
 
 func (s *server) checkHTTPService(parent context.Context, endpoint string) serviceState {

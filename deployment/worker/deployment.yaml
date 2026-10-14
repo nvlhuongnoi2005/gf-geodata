@@ -83,8 +83,11 @@ spec:
               mountPath: /work
           resources:
             requests:
-              cpu: "1"
-              memory: 2Gi
+              # Scheduler reserves this amount. Keep it small enough for a
+              # single-node Docker Desktop development cluster; Tilemaker uses
+              # the on-disk --store workspace to avoid reserving its peak RAM.
+              cpu: 250m
+              memory: 512Mi
             limits:
               cpu: "4"
               memory: 8Gi

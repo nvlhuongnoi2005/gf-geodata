@@ -181,7 +181,9 @@ Invoke-RestMethod -Method Post -Uri 'http://geodata.localhost/api/geodata/v1/job
 
 The worker downloads the source into a short-lived `emptyDir`, writes a private
 MBTiles artifact to `geodata-derived`, and records only its internal object key
-in the catalog. It uses up to 8 GiB RAM and up to 50 GiB node-local temporary
-space, so increase those limits before processing a country-scale PBF if the
-node cannot accommodate it.
+in the catalog. Its development reservation is 512 MiB RAM, with an 8 GiB
+runtime limit and up to 50 GiB node-local temporary space. For a country-scale
+PBF, give Docker Desktop at least 10 GiB RAM (or run the worker on a dedicated
+node); lowering the reservation only makes scheduling possible and does not
+reduce Tilemaker's actual peak-memory requirement.
 
