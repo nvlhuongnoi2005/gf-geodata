@@ -43,8 +43,8 @@ $geodataS3Config = @{
       name = 'geodata-upload'
       credentials = @(@{ accessKey = $geodataUploadKey; secretKey = $geodataUploadSecret })
       actions = @('Write', 'List')
-      resources = @('buckets/geodata-raw/')
-    }
+      resources = @('buckets/geodata-raw/', 'buckets/geodata-derived/')
+    },
     @{
       name = 'geodata-worker'
       credentials = @(@{ accessKey = $geodataWorkerKey; secretKey = $geodataWorkerSecret })

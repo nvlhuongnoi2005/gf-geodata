@@ -205,7 +205,7 @@
     "pipeline.stopWarning": "The in-progress conversion is stopped and its temporary output is removed. Source data remains available for another attempt.",
     "pipeline.delete": "Delete",
     "pipeline.deleteTitle": "Delete conversion task",
-    "pipeline.deleteDescription": "Remove the task history for “{{name}}”? Source data is not deleted.",
+    "pipeline.deleteDescription": "Delete the converted MBTiles output and task history for “{{name}}”? Source data is not deleted.",
     "pipeline.actionFailed": "The conversion task could not be updated. Please try again.",
   "style.preset": "Style preset",
   "style.emptyPreset": "Empty style",

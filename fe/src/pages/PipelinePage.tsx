@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
-  FormControl, InputLabel, LinearProgress, MenuItem, Paper, Select, Stack,
+  FormControl, IconButton, InputLabel, LinearProgress, MenuItem, Paper, Select, Stack,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography,
+  Tooltip,
 } from "@mui/material";
 import { CheckCircle2, Clock3, Play, RefreshCw, Square, Trash2, Workflow, XCircle } from "lucide-react";
 import { useAuth } from "../auth";
@@ -142,14 +143,13 @@ export function PipelinePage() {
     </Box>
     {loadError && <Alert severity="error" action={<Button color="inherit" size="small" onClick={() => void loadData()}>{t("datasets.retry")}</Button>}>{t("pipeline.loadFailed")}</Alert>}
     {!loadError && readySources.length === 0 && !loading && <Alert severity="info">{t("pipeline.noReadySource")}</Alert>}
-    <TableContainer component={Paper} variant="outlined"><Table size="small" aria-label={t("nav.pipeline")}><TableHead><TableRow><TableCell>{t("pipeline.source")}</TableCell><TableCell>{t("pipeline.output")}</TableCell><TableCell>{t("pipeline.progress")}</TableCell><TableCell>{t("pipeline.time")}</TableCell><TableCell>{t("pipeline.status")}</TableCell><TableCell align="right">{t("pipeline.actions")}</TableCell></TableRow></TableHead><TableBody>
-      {jobs.length === 0 ? <TableRow><TableCell colSpan={6} sx={{ py: 5, textAlign: "center" }}><Typography color="text.secondary">{t("pipeline.empty")}</Typography></TableCell></TableRow> : jobs.map((job) => <TableRow key={job.id} hover>
+    <TableContainer component={Paper} variant="outlined"><Table size="small" aria-label={t("nav.pipeline")}><TableHead><TableRow><TableCell>{t("pipeline.source")}</TableCell><TableCell>{t("pipeline.output")}</TableCell><TableCell>{t("pipeline.progress")}</TableCell><TableCell>{t("pipeline.time")}</TableCell><TableCell>{t("pipeline.status")}</TableCell></TableRow></TableHead><TableBody>
+      {jobs.length === 0 ? <TableRow><TableCell colSpan={5} sx={{ py: 5, textAlign: "center" }}><Typography color="text.secondary">{t("pipeline.empty")}</Typography></TableCell></TableRow> : jobs.map((job) => <TableRow key={job.id} hover>
         <TableCell><Typography sx={{ fontWeight: 650 }}>{job.sourceName}</Typography><Typography variant="caption" color="text.secondary">{job.sourceFileName} · {formatName(job.sourceFormat)}</Typography></TableCell>
         <TableCell><Typography variant="body2">MBTiles</Typography><Typography variant="caption" color="text.secondary">{t("pipeline.zoomRange", { min: job.minZoom, max: job.maxZoom })}</Typography></TableCell>
         <TableCell sx={{ minWidth: 180 }}><Stack spacing={0.6}><LinearProgress variant="determinate" value={job.progress} color={job.status === "failed" ? "error" : job.status === "succeeded" ? "success" : "primary"} /><Typography variant="caption" color="text.secondary">{t(jobStepLabels[job.currentStep] ?? "pipeline.step.queued")} · {job.progress}%</Typography><Typography variant="caption" color="text.secondary">{estimateLabel(job)}</Typography></Stack></TableCell>
         <TableCell><Typography variant="caption">{formatDate(job.createdAt)}</Typography></TableCell>
-        <TableCell><Chip size="small" color={job.status === "failed" ? "error" : job.status === "succeeded" ? "success" : job.status === "running" ? "primary" : "default"} icon={job.status === "succeeded" ? <CheckCircle2 size={13} /> : job.status === "failed" ? <XCircle size={13} /> : <Clock3 size={13} />} label={t(jobStatusLabels[job.status])} /></TableCell>
-        <TableCell align="right">{["queued", "running"].includes(job.status) ? <Button color="error" size="small" startIcon={<Square size={14} />} onClick={() => { setActionError(false); setPendingAction({ kind: "cancel", job }); }}>{t("pipeline.stop")}</Button> : ["failed", "canceled"].includes(job.status) ? <Button color="error" size="small" startIcon={<Trash2 size={14} />} onClick={() => { setActionError(false); setPendingAction({ kind: "delete", job }); }}>{t("pipeline.delete")}</Button> : ""}</TableCell>
+        <TableCell><Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}><Chip size="small" color={job.status === "failed" ? "error" : job.status === "succeeded" ? "success" : job.status === "running" ? "primary" : "default"} icon={job.status === "succeeded" ? <CheckCircle2 size={13} /> : job.status === "failed" ? <XCircle size={13} /> : <Clock3 size={13} />} label={t(jobStatusLabels[job.status])} />{["queued", "running"].includes(job.status) ? <Tooltip title={t("pipeline.stop")}><IconButton size="small" color="error" onClick={() => { setActionError(false); setPendingAction({ kind: "cancel", job }); }} aria-label={t("pipeline.stop")}><Square size={16} /></IconButton></Tooltip> : <Tooltip title={t("pipeline.delete")}><IconButton size="small" color="error" onClick={() => { setActionError(false); setPendingAction({ kind: "delete", job }); }} aria-label={t("pipeline.delete")}><Trash2 size={16} /></IconButton></Tooltip>}</Stack></TableCell>
       </TableRow>)}
     </TableBody></Table></TableContainer>
     <Dialog open={dialogOpen} onClose={() => !creating && setDialogOpen(false)} maxWidth="sm" fullWidth><DialogTitle sx={{ fontWeight: 750 }}>{t("pipeline.create")}</DialogTitle><DialogContent dividers><Stack spacing={2.5}>

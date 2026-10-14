@@ -205,7 +205,7 @@
     "pipeline.stopWarning": "Tác vụ đang chạy sẽ dừng và đầu ra tạm thời bị xóa. Dữ liệu nguồn vẫn sẵn sàng để tạo lại tác vụ.",
     "pipeline.delete": "Xóa",
     "pipeline.deleteTitle": "Xóa tác vụ chuyển đổi",
-    "pipeline.deleteDescription": "Xóa lịch sử tác vụ của “{{name}}”? Dữ liệu nguồn không bị xóa.",
+    "pipeline.deleteDescription": "Xóa MBTiles đã chuyển đổi và lịch sử tác vụ của “{{name}}”? Dữ liệu nguồn không bị xóa.",
     "pipeline.actionFailed": "Không thể cập nhật tác vụ chuyển đổi. Vui lòng thử lại.",
   "style.preset": "Mẫu style có sẵn",
   "style.emptyPreset": "Style trống",

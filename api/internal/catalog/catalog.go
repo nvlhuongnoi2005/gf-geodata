@@ -457,20 +457,54 @@ func (s *Store) IsConversionJobCanceled(ctx context.Context, jobID string) (bool
 	return status == "canceled", err
 }
 
-// DeleteConversionJob only removes an already canceled or failed history item.
-// Successful jobs retain their record because it owns a derived artifact.
+// ConversionJobOutputKeyForDeletion returns an internal artifact key only to the
+// API process. It is never serialized to the browser.
+func (s *Store) ConversionJobOutputKeyForDeletion(ctx context.Context, jobID string) (string, error) {
+	var status, outputObjectKey string
+	err := s.pool.QueryRow(ctx, `
+SELECT status, COALESCE(output_object_key, '')
+FROM conversion_jobs WHERE id = $1`, jobID).Scan(&status, &outputObjectKey)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrConversionJobNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if status != "succeeded" && status != "failed" && status != "canceled" {
+		return "", ErrConversionJobNotRemovable
+	}
+	return outputObjectKey, nil
+}
+
+// DeleteConversionJob removes a terminal task after the caller has removed
+// any derived artifact returned by ConversionJobOutputKeyForDeletion.
 func (s *Store) DeleteConversionJob(ctx context.Context, jobID string) error {
-	command, err := s.pool.Exec(ctx, `
-DELETE FROM conversion_jobs
-WHERE id = $1 AND status IN ('failed', 'canceled') AND output_object_key IS NULL`, jobID)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if command.RowsAffected() == 1 {
-		return nil
+	defer func() { _ = tx.Rollback(ctx) }()
+	var rawUploadID string
+	err = tx.QueryRow(ctx, `
+DELETE FROM conversion_jobs
+WHERE id = $1 AND status IN ('succeeded', 'failed', 'canceled')
+RETURNING raw_upload_id`, jobID).Scan(&rawUploadID)
+	if err == nil {
+		if _, err := tx.Exec(ctx, `
+UPDATE raw_uploads
+SET status = CASE WHEN EXISTS (
+  SELECT 1 FROM conversion_jobs WHERE raw_upload_id = $1 AND status = 'succeeded'
+) THEN 'converted' ELSE 'uploaded' END
+WHERE id = $1`, rawUploadID); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
 	}
 	var exists bool
-	if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM conversion_jobs WHERE id = $1)`, jobID).Scan(&exists); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM conversion_jobs WHERE id = $1)`, jobID).Scan(&exists); err != nil {
 		return err
 	}
 	if !exists {

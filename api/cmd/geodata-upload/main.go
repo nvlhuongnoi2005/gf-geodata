@@ -134,7 +134,7 @@ func main() {
 	})
 	app := &server{
 		keys: keys, issuer: issuer, audience: audience, adminRole: roleName,
-		bucket: required("S3_BUCKET"), maxUploadBytes: maxBytes, uploader: uploader,
+		bucket: required("S3_BUCKET"), derivedBucket: required("S3_DERIVED_BUCKET"), maxUploadBytes: maxBytes, uploader: uploader,
 		objectStore: objectStore, store: store, authJWKSURL: jwksURL,
 		tileGatewayHealthURL: strings.TrimSpace(os.Getenv("TILE_GATEWAY_HEALTH_URL")),
 		healthClient:         &http.Client{Timeout: 3 * time.Second},
@@ -192,15 +192,15 @@ func openCatalog(ctx context.Context) *catalog.Store {
 }
 
 type server struct {
-	keys                                keyfunc.Keyfunc
-	issuer, audience, adminRole, bucket string
-	maxUploadBytes                      int64
-	uploader                            *manager.Uploader
-	objectStore                         *s3.Client
-	store                               *catalog.Store
-	authJWKSURL, tileGatewayHealthURL   string
-	healthClient                        *http.Client
-	uploadSlots                         chan struct{}
+	keys                                               keyfunc.Keyfunc
+	issuer, audience, adminRole, bucket, derivedBucket string
+	maxUploadBytes                                     int64
+	uploader                                           *manager.Uploader
+	objectStore                                        *s3.Client
+	store                                              *catalog.Store
+	authJWKSURL, tileGatewayHealthURL                  string
+	healthClient                                       *http.Client
+	uploadSlots                                        chan struct{}
 }
 
 func (s *server) requireAdmin(next http.Handler) http.Handler {
@@ -511,6 +511,26 @@ func (s *server) deleteConversionJob(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+	outputObjectKey, err := s.store.ConversionJobOutputKeyForDeletion(ctx, id)
+	if err != nil {
+		switch {
+		case errors.Is(err, catalog.ErrConversionJobNotFound):
+			http.Error(w, "conversion job not found", http.StatusNotFound)
+		case errors.Is(err, catalog.ErrConversionJobNotRemovable):
+			http.Error(w, "only finished conversion jobs may be removed", http.StatusConflict)
+		default:
+			slog.Error("read conversion output for deletion", "job_id", id, "error", err)
+			http.Error(w, "could not delete conversion job", http.StatusServiceUnavailable)
+		}
+		return
+	}
+	if outputObjectKey != "" {
+		if _, err := s.objectStore.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.derivedBucket), Key: aws.String(outputObjectKey)}); err != nil {
+			slog.Error("delete converted output", "job_id", id, "error", err)
+			http.Error(w, "could not delete converted data", http.StatusBadGateway)
+			return
+		}
+	}
 	if err := s.store.DeleteConversionJob(ctx, id); err != nil {
 		switch {
 		case errors.Is(err, catalog.ErrConversionJobNotFound):
