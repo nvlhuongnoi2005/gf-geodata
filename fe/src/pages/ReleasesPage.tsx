@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  Alert,
   Button,
   Dialog,
   DialogActions,
@@ -43,40 +44,66 @@ export function ReleasesPage() {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [artifactID, setArtifactID] = useState("");
+  const [error, setError] = useState("");
 
   const load = async () => {
     if (!accessToken) return;
-    const headers = { Authorization: `Bearer ${accessToken}` };
-    const [releaseResponse, artifactResponse] = await Promise.all([
-      fetch("/api/geodata/v1/releases", { headers }),
-      fetch("/api/geodata/v1/artifacts", { headers }),
-    ]);
-    if (releaseResponse.ok) setReleases((await releaseResponse.json()).items ?? []);
-    if (artifactResponse.ok) setArtifacts((await artifactResponse.json()).items ?? []);
+    try {
+      const headers = { Authorization: `Bearer ${accessToken}` };
+      const [releaseResponse, artifactResponse] = await Promise.all([
+        fetch("/api/geodata/v1/releases", { headers }),
+        fetch("/api/geodata/v1/artifacts", { headers }),
+      ]);
+      if (!releaseResponse.ok) throw new Error("Không thể tải danh sách bản phát hành.");
+      setReleases((await releaseResponse.json()).items ?? []);
+      if (artifactResponse.ok) setArtifacts((await artifactResponse.json()).items ?? []);
+      else throw new Error("Không thể tải dữ liệu đầu ra MBTiles.");
+      setError("");
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Không thể tải bản phát hành.");
+    }
   };
 
   useEffect(() => {
     void load();
   }, [accessToken]);
 
+  const hasPublishingRelease = releases.some((release) => release.status === "publishing");
+
+  useEffect(() => {
+    if (!hasPublishingRelease) return;
+    const timer = window.setInterval(() => { void load(); }, 5000);
+    return () => window.clearInterval(timer);
+  }, [accessToken, hasPublishingRelease]);
+
   const create = async () => {
     if (!accessToken) return;
-    await fetch("/api/geodata/v1/releases", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ name, slug, visibility: "authenticated", artifactIds: [artifactID] }),
-    });
-    setOpen(false);
-    void load();
+    try {
+      const response = await fetch("/api/geodata/v1/releases", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ name, slug, visibility: "authenticated", artifactIds: [artifactID] }),
+      });
+      if (!response.ok) throw new Error("Không thể tạo bản nháp. Kiểm tra mã release và dữ liệu MBTiles đã chọn.");
+      setOpen(false);
+      await load();
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "Không thể tạo bản nháp.");
+    }
   };
 
   const publish = async (id: string) => {
     if (!accessToken) return;
-    await fetch(`/api/geodata/v1/releases/${id}/publish`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    void load();
+    try {
+      const response = await fetch(`/api/geodata/v1/releases/${id}/publish`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!response.ok) throw new Error("Không thể đưa bản nháp vào hàng đợi phát hành.");
+      await load();
+    } catch (publishError) {
+      setError(publishError instanceof Error ? publishError.message : "Không thể phát hành bản đồ.");
+    }
   };
 
   return (
@@ -95,6 +122,8 @@ export function ReleasesPage() {
         </Button>
       </Stack>
 
+      {error && <Alert severity="error" onClose={() => setError("")}>{error}</Alert>}
+
       <Paper>
         <Table>
           <TableHead>
@@ -106,6 +135,7 @@ export function ReleasesPage() {
             </TableRow>
           </TableHead>
           <TableBody>
+            {!releases.length && <TableRow><TableCell colSpan={4} align="center">Chưa có bản phát hành nào.</TableCell></TableRow>}
             {releases.map((release) => (
               <TableRow key={release.id}>
                 <TableCell>

@@ -118,9 +118,15 @@ type ConversionArtifact struct {
 }
 
 type MapRelease struct {
-	ID, Name, Slug, Description, Visibility, Status string
-	CreatedAt, UpdatedAt                            time.Time
-	PublishedAt                                     *time.Time
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Slug        string     `json:"slug"`
+	Description string     `json:"description"`
+	Visibility  string     `json:"visibility"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
+	PublishedAt *time.Time `json:"publishedAt"`
 }
 
 type ReleaseArtifact struct {
