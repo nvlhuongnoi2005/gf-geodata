@@ -104,13 +104,12 @@ type ConversionJobView struct {
 // ConversionArtifactView is the safe, browser-facing metadata for a successful
 // MBTiles conversion. Object keys stay in ConversionArtifact only.
 type ConversionArtifactView struct {
-	ID             string    `json:"id"`
-	SourceName     string    `json:"sourceName"`
-	SourceFileName string    `json:"sourceFileName"`
-	SourceFormat   string    `json:"sourceFormat"`
-	MinZoom        int       `json:"minZoom"`
-	MaxZoom        int       `json:"maxZoom"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID           string    `json:"id"`
+	SourceName   string    `json:"sourceName"`
+	OutputFormat string    `json:"outputFormat"`
+	MinZoom      int       `json:"minZoom"`
+	MaxZoom      int       `json:"maxZoom"`
+	CreatedAt    time.Time `json:"createdAt"`
 }
 
 type ConversionArtifact struct {
@@ -343,7 +342,7 @@ LIMIT $1`, limit)
 
 func (s *Store) ListConversionArtifacts(ctx context.Context, limit int) ([]ConversionArtifactView, error) {
 	rows, err := s.pool.Query(ctx, `
-SELECT j.id, r.display_name, r.source_file_name, r.source_format, j.min_zoom, j.max_zoom, j.finished_at
+SELECT j.id, r.display_name, 'mbtiles', j.min_zoom, j.max_zoom, j.finished_at
 FROM conversion_jobs j
 JOIN raw_uploads r ON r.id = j.raw_upload_id
 WHERE j.status = 'succeeded' AND j.output_object_key IS NOT NULL
@@ -356,7 +355,7 @@ LIMIT $1`, limit)
 	items := make([]ConversionArtifactView, 0)
 	for rows.Next() {
 		var item ConversionArtifactView
-		if err := rows.Scan(&item.ID, &item.SourceName, &item.SourceFileName, &item.SourceFormat, &item.MinZoom, &item.MaxZoom, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.SourceName, &item.OutputFormat, &item.MinZoom, &item.MaxZoom, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -367,11 +366,11 @@ LIMIT $1`, limit)
 func (s *Store) ConversionArtifact(ctx context.Context, id string) (ConversionArtifact, error) {
 	var artifact ConversionArtifact
 	err := s.pool.QueryRow(ctx, `
-SELECT j.id, r.display_name, r.source_file_name, r.source_format, j.min_zoom, j.max_zoom, j.finished_at, j.output_object_key
+SELECT j.id, r.display_name, 'mbtiles', j.min_zoom, j.max_zoom, j.finished_at, j.output_object_key
 FROM conversion_jobs j
 JOIN raw_uploads r ON r.id = j.raw_upload_id
 WHERE j.id = $1 AND j.status = 'succeeded' AND j.output_object_key IS NOT NULL`, id).Scan(
-		&artifact.ID, &artifact.SourceName, &artifact.SourceFileName, &artifact.SourceFormat,
+		&artifact.ID, &artifact.SourceName, &artifact.OutputFormat,
 		&artifact.MinZoom, &artifact.MaxZoom, &artifact.CreatedAt, &artifact.OutputObjectKey,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
