@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -37,6 +38,8 @@ var (
 	ErrConversionJobNotFound     = errors.New("conversion job not found")
 	ErrConversionJobNotActive    = errors.New("conversion job is not active")
 	ErrConversionJobNotRemovable = errors.New("conversion job is not removable")
+	ErrReleaseVersionExists      = errors.New("release map code and version already exist")
+	ErrReleaseArtifactAssigned   = errors.New("release artifact is already assigned")
 )
 
 // RawUpload is the safe catalog view returned to the browser. Storage paths and
@@ -181,8 +184,18 @@ type ReleaseArtifact struct {
 	ReleaseID, ArtifactID, SourceName, OutputObjectKey string
 	TilePrefix, TileFormat                             string
 	ServingBackend, TileServerDataset, WarmStatus      string
+	DataType                                           string
 	MinZoom, MaxZoom                                   int
 	Bounds, VectorLayers                               json.RawMessage
+}
+
+// PublishedMap is the safe map-layer catalog record consumed by WebGIS. It
+// deliberately contains no object key, filesystem path, or storage identity.
+// One published release contributes its serving-ready primary MBTiles artifact.
+type PublishedMap struct {
+	Release  MapRelease
+	Artifact ReleaseArtifact
+	DataType string
 }
 
 type NewRawUpload struct {
@@ -557,6 +570,9 @@ func (s *Store) CreateRelease(ctx context.Context, release MapRelease, artifactI
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err = tx.Exec(ctx, `INSERT INTO map_releases (id,name,map_code,version,slug,description,release_notes,visibility,style_version_id,created_by,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::uuid,NULLIF($10,''),$11,$11)`, release.ID, release.Name, release.MapCode, release.Version, release.Slug, release.Description, release.ReleaseNotes, release.Visibility, release.StyleVersionID, release.CreatedBy, release.CreatedAt); err != nil {
+		if uniqueConstraint(err, "map_releases_map_code_version_unique") || uniqueConstraint(err, "map_releases_slug_key") {
+			return ErrReleaseVersionExists
+		}
 		return err
 	}
 	for _, id := range artifactIDs {
@@ -567,6 +583,9 @@ FROM conversion_jobs
 WHERE id=$2 AND status='succeeded' AND output_object_key IS NOT NULL
   AND tile_cache_status IN ('pending','warming','ready','failed') AND tile_serving_backend='geodata_mbtiles'`, release.ID, id)
 		if err != nil {
+			if uniqueConstraint(err, "map_release_artifacts_tile_server_dataset_unique") {
+				return ErrReleaseArtifactAssigned
+			}
 			return err
 		}
 		if result.RowsAffected() != 1 {
@@ -574,6 +593,11 @@ WHERE id=$2 AND status='succeeded' AND output_object_key IS NOT NULL
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+func uniqueConstraint(err error, name string) bool {
+	var databaseError *pgconn.PgError
+	return errors.As(err, &databaseError) && databaseError.Code == "23505" && databaseError.ConstraintName == name
 }
 
 func (s *Store) ListReleases(ctx context.Context, limit int) ([]MapRelease, error) {
@@ -937,7 +961,7 @@ func (s *Store) PublishedRelease(ctx context.Context, slug string) (MapRelease, 
 	if err != nil {
 		return MapRelease{}, nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT a.release_id,a.artifact_id,r.display_name,'',COALESCE(a.tile_prefix,''),COALESCE(a.tile_format,''),COALESCE(a.serving_backend,'object_store'),COALESCE(a.tile_server_dataset,''),COALESCE(a.warm_status,'not_required'),a.min_zoom,a.max_zoom,COALESCE(a.bounds::text,'[-180,-85.051129,180,85.051129]'),COALESCE(a.vector_layers::text,'[]') FROM map_release_artifacts a JOIN conversion_jobs j ON j.id=a.artifact_id JOIN raw_uploads r ON r.id=j.raw_upload_id WHERE a.release_id=$1`, release.ID)
+	rows, err := s.pool.Query(ctx, `SELECT a.release_id,a.artifact_id,r.display_name,'',COALESCE(a.tile_prefix,''),COALESCE(a.tile_format,''),COALESCE(a.serving_backend,'object_store'),COALESCE(a.tile_server_dataset,''),COALESCE(a.warm_status,'not_required'),COALESCE(r.data_type,'other'),a.min_zoom,a.max_zoom,COALESCE(a.bounds::text,'[-180,-85.051129,180,85.051129]'),COALESCE(a.vector_layers::text,'[]') FROM map_release_artifacts a JOIN conversion_jobs j ON j.id=a.artifact_id JOIN raw_uploads r ON r.id=j.raw_upload_id WHERE a.release_id=$1`, release.ID)
 	if err != nil {
 		return MapRelease{}, nil, err
 	}
@@ -946,13 +970,82 @@ func (s *Store) PublishedRelease(ctx context.Context, slug string) (MapRelease, 
 	for rows.Next() {
 		var item ReleaseArtifact
 		var bounds, vectorLayers string
-		if err := rows.Scan(&item.ReleaseID, &item.ArtifactID, &item.SourceName, &item.OutputObjectKey, &item.TilePrefix, &item.TileFormat, &item.ServingBackend, &item.TileServerDataset, &item.WarmStatus, &item.MinZoom, &item.MaxZoom, &bounds, &vectorLayers); err != nil {
+		if err := rows.Scan(&item.ReleaseID, &item.ArtifactID, &item.SourceName, &item.OutputObjectKey, &item.TilePrefix, &item.TileFormat, &item.ServingBackend, &item.TileServerDataset, &item.WarmStatus, &item.DataType, &item.MinZoom, &item.MaxZoom, &bounds, &vectorLayers); err != nil {
 			return MapRelease{}, nil, err
 		}
 		item.Bounds, item.VectorLayers = json.RawMessage(bounds), json.RawMessage(vectorLayers)
 		items = append(items, item)
 	}
 	return release, items, rows.Err()
+}
+
+// ListPublishedMaps returns only published direct-MBTiles releases the viewer
+// can open. Public releases are visible to everyone; named grants are applied
+// by user or organisation; GeoData administrators may inspect every release.
+// This is an authorization boundary, not merely a UI filter.
+func (s *Store) ListPublishedMaps(ctx context.Context, userID, organization string, administrator bool) ([]PublishedMap, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT
+  r.id,r.name,r.map_code,r.version,r.slug,r.description,r.release_notes,
+  r.visibility,r.status,r.created_at,r.updated_at,r.published_at,
+  COALESCE(r.style_version_id::text,''),
+  a.release_id,a.artifact_id,raw.display_name,COALESCE(a.tile_format,''),
+  COALESCE(a.serving_backend,''),COALESCE(a.warm_status,''),
+  COALESCE(raw.data_type,'other'),a.min_zoom,a.max_zoom,
+  COALESCE(a.bounds::text,'[-180,-85.051129,180,85.051129]'),
+  COALESCE(a.vector_layers::text,'[]')
+FROM map_releases r
+JOIN LATERAL (
+  SELECT artifact_id,release_id,tile_format,serving_backend,warm_status,
+         min_zoom,max_zoom,bounds,vector_layers
+  FROM map_release_artifacts
+  WHERE release_id=r.id
+    AND serving_backend='geodata_mbtiles'
+    AND warm_status='ready'
+  ORDER BY artifact_id
+  LIMIT 1
+) a ON TRUE
+JOIN conversion_jobs j ON j.id=a.artifact_id
+JOIN raw_uploads raw ON raw.id=j.raw_upload_id
+WHERE r.status='published'
+  AND (
+    $1::boolean
+    OR r.visibility='public'
+    OR EXISTS (
+      SELECT 1 FROM access_grants g
+      WHERE g.release_id=r.id AND g.status='active' AND (
+        (g.principal_type='user' AND g.principal_id=$2)
+        OR (g.principal_type='organization' AND $3<>'' AND lower(g.principal_id)=lower($3))
+      )
+    )
+  )
+ORDER BY r.published_at DESC NULLS LAST,r.updated_at DESC`, administrator, userID, organization)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]PublishedMap, 0)
+	for rows.Next() {
+		var item PublishedMap
+		var bounds, vectorLayers string
+		if err := rows.Scan(
+			&item.Release.ID, &item.Release.Name, &item.Release.MapCode,
+			&item.Release.Version, &item.Release.Slug, &item.Release.Description,
+			&item.Release.ReleaseNotes, &item.Release.Visibility, &item.Release.Status,
+			&item.Release.CreatedAt, &item.Release.UpdatedAt, &item.Release.PublishedAt,
+			&item.Release.StyleVersionID, &item.Artifact.ReleaseID, &item.Artifact.ArtifactID,
+			&item.Artifact.SourceName, &item.Artifact.TileFormat,
+			&item.Artifact.ServingBackend, &item.Artifact.WarmStatus, &item.DataType,
+			&item.Artifact.MinZoom, &item.Artifact.MaxZoom, &bounds, &vectorLayers,
+		); err != nil {
+			return nil, err
+		}
+		item.Artifact.DataType = item.DataType
+		item.Artifact.Bounds = json.RawMessage(bounds)
+		item.Artifact.VectorLayers = json.RawMessage(vectorLayers)
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func defaultJSON(value json.RawMessage, fallback string) string {

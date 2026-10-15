@@ -253,6 +253,48 @@ kubectl -n tile-server rollout status deployment/geodata-mbtiles-store-warmer --
 kubectl -n tile-server rollout status deployment/geodata-tile-gateway --timeout=5m
 ```
 
+## Connect WebGIS map layers to GeoData
+
+The WebGIS Controller must use
+`http://geodata-tile-gateway.tile-server.svc.cluster.local:8091` as
+`GEODATA_INTERNAL_URL`. Its `/api/geodata/catalog` route verifies `map:read`,
+then forwards the original bearer token to GeoData. The MapLibre client uses
+that Controller route for the catalog, styles, sprites, TileJSON and tiles.
+Consequently a user sees only releases permitted by the GeoData access policy;
+the browser never receives an in-cluster address, S3 key, or serving-volume
+path.
+
+The companion changes belong in the WebGIS repository: Controller proxy,
+`GEODATA_INTERNAL_URL` config, and map-layer client adapter. Deploy both image
+updates before testing; the GeoData gateway NetworkPolicy already admits only
+the GeoData frontend and the WebGIS Controller on port 8091.
+
+```powershell
+# GeoData repository
+kubectl apply -k deployment/tile-gateway
+kubectl -n tile-server rollout restart deployment/geodata-tile-gateway
+kubectl -n tile-server rollout status deployment/geodata-tile-gateway --timeout=5m
+
+# WebGIS repository (after its Controller and frontend images are built/pushed)
+kubectl apply -k deployment/core
+kubectl -n webgis rollout restart deployment/controller deployment/frontend
+kubectl -n webgis rollout status deployment/controller --timeout=5m
+kubectl -n webgis rollout status deployment/frontend --timeout=5m
+```
+
+## Reuse an MBTiles artifact for a new map version
+
+A new semantic version may reuse an unchanged, serving-ready MBTiles artifact.
+This is normal when only release metadata, style, or access policy changes.
+Migration `013_release_artifact_version_reuse.sql` removes the old
+TileServer-only uniqueness rule that blocked this workflow. Build and deploy a
+new `geodata-upload` image, then restart it so its startup migration runs:
+
+```powershell
+kubectl -n tile-server rollout restart deployment/geodata-upload
+kubectl -n tile-server rollout status deployment/geodata-upload --timeout=5m
+```
+
 ## MapLibre release styles and sprites
 
 Migration `012_release_styles.sql` adds immutable style versions. An

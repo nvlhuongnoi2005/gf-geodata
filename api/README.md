@@ -29,6 +29,11 @@ full-object transfer or a TileServer restart. The tile gateway keeps a bounded
 SQLite reader pool per immutable artifact and serves its `z/x/y` bytes directly
 from that PVC after applying GeoData access control.
 
+The same immutable MBTiles artifact may be selected by more than one semantic
+map version (for example, `v1.0.0` and `v1.0.1` with different style or release
+metadata). Migration `013_release_artifact_version_reuse.sql` removes the old
+TileServer-only uniqueness rule that incorrectly blocked this valid workflow.
+
 ## Access policy
 
 Publishing only makes the map version available to the catalog. Its viewing
@@ -56,6 +61,17 @@ WebGIS `users` directory:
 The tile gateway validates the same WebGIS JWT. A restricted release requires
 an active grant matching the JWT `sub` or the account's current organisation.
 Public and authenticated releases retain their existing behavior.
+
+## WebGIS map-layer catalog
+
+`GET /v1/catalog` is the private gateway contract for the WebGIS **Map
+layers** panel. It returns only published, serving-ready direct-MBTiles
+releases that the caller can view. Without a token it contains public releases
+only; with a verified WebGIS JWT it also contains grants for the caller and
+their current organisation; a GeoData administrator can inspect all published
+releases. The response contains Controller-relative tile/style paths only, not
+S3 locations or PVC paths. WebGIS must proxy it with the original bearer token
+and proxy the returned tile/style/sprite URLs in the same way.
 
 Required settings are documented in `deployment/README.md`. The service fails
 closed if the WebGIS JWKS URL, issuer, or audience are missing. Confirm the

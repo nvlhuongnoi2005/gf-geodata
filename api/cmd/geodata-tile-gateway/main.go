@@ -84,6 +84,7 @@ func main() {
 	g := &gateway{store: store, s3: objectStore, bucket: env("S3_PUBLISHED_BUCKET", "geodata-published"), styleBucket: env("S3_DERIVED_BUCKET", "geodata-derived"), tileStoreRoot: required("MBTILES_STORE_ROOT"), tileServerURL: strings.TrimRight(env("TILE_SERVER_INTERNAL_URL", ""), "/"), httpClient: &http.Client{Timeout: 10 * time.Second}, keys: keys, issuer: required("AUTH_ISSUER"), audience: required("AUTH_AUDIENCE"), adminRole: env("AUTH_ADMIN_ROLE", "admin"), directory: webgisDirectory, readers: map[string]*mbtiles.Reader{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", g.health)
+	mux.HandleFunc("GET /v1/catalog", g.catalog)
 	mux.HandleFunc("GET /v1/releases/{slug}/tilejson/{artifactID}", g.tileJSON)
 	mux.HandleFunc("GET /v1/releases/{slug}/tiles/{artifactID}/{z}/{x}/{y}", g.tile)
 	mux.HandleFunc("GET /v1/releases/{slug}/style.json", g.style)
@@ -193,6 +194,114 @@ func (g *gateway) claims(r *http.Request) (jwt.MapClaims, bool) {
 	claims := jwt.MapClaims{}
 	token, err := jwt.ParseWithClaims(h, claims, g.keys.Keyfunc, jwt.WithValidMethods([]string{jwt.SigningMethodEdDSA.Alg()}), jwt.WithIssuer(g.issuer), jwt.WithAudience(g.audience), jwt.WithExpirationRequired())
 	return claims, err == nil && token != nil && token.Valid
+}
+
+// catalog is the WebGIS-facing map catalog. Unlike an unauthenticated list of
+// files, it is assembled from published releases and filtered by the same ACL
+// used by the tile and style endpoints. A client cannot discover a restricted
+// map merely by guessing an MBTiles artifact identifier.
+func (g *gateway) catalog(w http.ResponseWriter, r *http.Request) {
+	userID, organization := "", ""
+	administrator := false
+	if authorization := strings.TrimSpace(r.Header.Get("Authorization")); authorization != "" {
+		claims, ok := g.claims(r)
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		administrator = isAdmin(claims, g.adminRole)
+		if !administrator {
+			userID, _ = claims["sub"].(string)
+			if userID == "" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			if g.directory == nil {
+				http.Error(w, "restricted release directory is unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			var err error
+			organization, err = g.directory.OrganizationForUser(r.Context(), userID)
+			if err != nil && !errors.Is(err, directory.ErrNotFound) {
+				http.Error(w, "access directory is unavailable", http.StatusServiceUnavailable)
+				return
+			}
+		}
+	}
+	items, err := g.store.ListPublishedMaps(r.Context(), userID, organization, administrator)
+	if err != nil {
+		log.Printf("list published map catalog: %v", err)
+		http.Error(w, "catalog is temporarily unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	response := make([]mapCatalogItem, 0, len(items))
+	for _, item := range items {
+		stylePath := ""
+		if item.Release.StyleVersionID != "" {
+			stylePath = "/v1/releases/" + url.PathEscape(item.Release.Slug) + "/style.json"
+		}
+		response = append(response, mapCatalogItem{
+			ID:         item.Release.Slug,
+			Name:       item.Release.Name,
+			Label:      item.Release.Name + " — " + item.Release.Version,
+			MapCode:    item.Release.MapCode,
+			Version:    item.Release.Version,
+			DataType:   item.DataType,
+			Role:       catalogRole(item.DataType),
+			Format:     item.Artifact.TileFormat,
+			Kind:       catalogKind(item.Artifact.TileFormat),
+			TilePath:   "/v1/releases/" + url.PathEscape(item.Release.Slug) + "/tiles/" + url.PathEscape(item.Artifact.ArtifactID) + "/{z}/{x}/{y}",
+			StylePath:  stylePath,
+			MinZoom:    item.Artifact.MinZoom,
+			MaxZoom:    item.Artifact.MaxZoom,
+			TileSize:   256,
+			SourceName: item.Artifact.SourceName,
+			Visibility: item.Release.Visibility,
+		})
+	}
+	// The payload varies by identity, so shared browser/proxy caches must not
+	// reuse an authorised user's catalog for another user.
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Vary", "Authorization")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"items": response})
+}
+
+type mapCatalogItem struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Label      string `json:"label"`
+	MapCode    string `json:"mapCode"`
+	Version    string `json:"version"`
+	DataType   string `json:"dataType"`
+	Role       string `json:"role"`
+	Format     string `json:"format"`
+	Kind       string `json:"kind"`
+	TilePath   string `json:"tilePath"`
+	StylePath  string `json:"stylePath,omitempty"`
+	MinZoom    int    `json:"minZoom"`
+	MaxZoom    int    `json:"maxZoom"`
+	TileSize   int    `json:"tileSize"`
+	SourceName string `json:"sourceName"`
+	Visibility string `json:"visibility"`
+}
+
+func catalogKind(format string) string {
+	switch strings.ToLower(format) {
+	case "pbf", "mvt":
+		return "vector"
+	default:
+		return "raster"
+	}
+}
+
+func catalogRole(dataType string) string {
+	switch dataType {
+	case "administrative", "land_use", "hydrology", "other":
+		return "overlay"
+	default:
+		return "basemap"
+	}
 }
 func (g *gateway) tileJSON(w http.ResponseWriter, r *http.Request) {
 	_, arts, ok := g.release(w, r)

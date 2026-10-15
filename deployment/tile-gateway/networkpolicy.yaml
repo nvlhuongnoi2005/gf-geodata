@@ -7,7 +7,24 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: geodata-tile-gateway
-  policyTypes: [Egress]
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # GeoData's own frontend reaches the gateway through its nginx proxy.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-frontend
+      ports: [{ protocol: TCP, port: 8091 }]
+    # WebGIS Controller is the only cross-namespace caller. It forwards the
+    # browser JWT so the gateway still evaluates GeoData release ACLs.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: webgis
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: controller
+      ports: [{ protocol: TCP, port: 8091 }]
   egress:
     - to:
         - podSelector:
@@ -22,6 +39,16 @@ spec:
             matchLabels:
               app.kubernetes.io/name: tile-server
       ports: [{ protocol: TCP, port: 8080 }]
+    # Resolve a signed-in user's current organisation for restricted-release
+    # grants. The database role itself is SELECT-only on public.users.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: webgis
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: auth-postgres
+      ports: [{ protocol: TCP, port: 5432 }]
     # Temporary legacy path. Remove after old object-store releases are retired.
     - to:
         - namespaceSelector:

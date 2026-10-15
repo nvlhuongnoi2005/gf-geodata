@@ -596,6 +596,17 @@ func (s *server) createRelease(w http.ResponseWriter, r *http.Request) {
 	// restricted until an administrator makes it public or grants recipients.
 	release := catalog.MapRelease{ID: id, Name: strings.TrimSpace(request.Name), MapCode: mapCode, Version: request.Version, Slug: slug, Description: strings.TrimSpace(request.Description), ReleaseNotes: strings.TrimSpace(request.ReleaseNotes), Visibility: "restricted", Status: "draft", StyleVersionID: request.StyleVersionID, CreatedBy: actor, CreatedAt: time.Now().UTC()}
 	if err = s.store.CreateRelease(ctx, release, request.ArtifactIDs); err != nil {
+		if errors.Is(err, catalog.ErrReleaseVersionExists) {
+			http.Error(w, "a release with this map code and version already exists", http.StatusConflict)
+			return
+		}
+		if errors.Is(err, catalog.ErrReleaseArtifactAssigned) {
+			// This can occur only until migration 013 has been applied. Keeping
+			// the message accurate makes a partial rollout diagnosable without
+			// claiming that the requested semantic version is duplicated.
+			http.Error(w, "the selected MBTiles output is temporarily reserved by the legacy serving configuration; apply the latest catalog migration", http.StatusConflict)
+			return
+		}
 		if errors.Is(err, catalog.ErrConversionJobNotActive) {
 			http.Error(w, "the selected MBTiles output is not ready in GeoData tile storage", http.StatusConflict)
 			return
@@ -603,10 +614,6 @@ func (s *server) createRelease(w http.ResponseWriter, r *http.Request) {
 		// Keep database implementation details out of the browser, but retain
 		// the complete error in the server log for an operator to diagnose.
 		slog.Error("create map release", "map_code", mapCode, "version", request.Version, "artifact_count", len(request.ArtifactIDs), "error", err)
-		if strings.Contains(err.Error(), "duplicate key") {
-			http.Error(w, "a release with this map code and version already exists", http.StatusConflict)
-			return
-		}
 		http.Error(w, "could not save the draft release", http.StatusServiceUnavailable)
 		return
 	}
