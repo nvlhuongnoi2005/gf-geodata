@@ -540,7 +540,13 @@ func setTileCacheControl(w http.ResponseWriter, release catalog.MapRelease) {
 		w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
 		return
 	}
-	w.Header().Set("Cache-Control", "private, max-age=86400")
+
+	// A restricted release can lose access at any time. Do not allow the
+	// browser (or an intermediary acting on its behalf) to reuse a tile,
+	// TileJSON, style, sprite, or glyph obtained before that revocation.
+	// Every request must therefore return to release() for authorization.
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Vary", "Authorization")
 }
 
 // tileFromTileServer retains GeoData authorization while delegating the hot
