@@ -627,6 +627,10 @@ func (s *server) publishRelease(w http.ResponseWriter, r *http.Request) {
 		// Do not turn database or infrastructure failures into a misleading
 		// lifecycle error. The draft remains unchanged when publishing fails.
 		slog.Error("publish map release", "release_id", id, "error", err)
+		if errors.Is(err, catalog.ErrReleaseArtifactsNotReady) {
+			http.Error(w, "MBTiles is still being prepared for GeoData serving", http.StatusConflict)
+			return
+		}
 		if errors.Is(err, catalog.ErrConversionJobNotFound) || errors.Is(err, catalog.ErrConversionJobNotActive) {
 			http.Error(w, "this release can no longer be published", http.StatusConflict)
 			return

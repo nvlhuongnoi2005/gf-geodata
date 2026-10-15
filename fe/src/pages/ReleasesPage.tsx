@@ -65,6 +65,24 @@ type StyleVersion = {
 const apiRoot = "/api/geodata/v1";
 const importDataTypes = ["street", "satellite", "administrative", "topographic", "land_use", "hydrology", "other"] as const;
 
+function StyleFilePicker({ label, emptyLabel, file, accept, onChange }: {
+  label: string;
+  emptyLabel: string;
+  file: File | null;
+  accept: string;
+  onChange: (file: File | null) => void;
+}) {
+  return (
+    <Box>
+      <Typography variant="body2" sx={{ mb: 0.75, fontWeight: 650 }}>{label}</Typography>
+      <Button component="label" variant="outlined" fullWidth sx={{ justifyContent: "flex-start", textTransform: "none", minHeight: 42 }}>
+        {file?.name ?? emptyLabel}
+        <input hidden type="file" accept={accept} onChange={(event) => onChange(event.currentTarget.files?.[0] ?? null)} />
+      </Button>
+    </Box>
+  );
+}
+
 const statusColor: Record<ReleaseStatus, ChipProps["color"]> = {
   draft: "default",
   publishing: "info",
@@ -95,6 +113,10 @@ export function ReleasesPage() {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importName, setImportName] = useState("");
   const [importDataType, setImportDataType] = useState("");
+  const [importMapCode, setImportMapCode] = useState("");
+  const [importVersion, setImportVersion] = useState("1.0.0");
+  const [importDescription, setImportDescription] = useState("");
+  const [importStyleVersionID, setImportStyleVersionID] = useState("");
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
   const [styleName, setStyleName] = useState("");
@@ -226,13 +248,17 @@ export function ReleasesPage() {
     setImportFile(null);
     setImportName("");
     setImportDataType("");
+    setImportMapCode("");
+    setImportVersion("1.0.0");
+    setImportDescription("");
+    setImportStyleVersionID("");
     setImportProgress(0);
     setError("");
     if (importFileInputRef.current) importFileInputRef.current.value = "";
     setImportOpen(true);
   };
   const importMBTiles = () => {
-    if (!accessToken || !importFile || !importName.trim() || !importDataType || importing) return;
+    if (!accessToken || !importFile || !importName.trim() || !importDataType || !isSemVer(importVersion) || importing) return;
     const file = importFile;
     setImporting(true);
     setImportProgress(0);
@@ -245,11 +271,16 @@ export function ReleasesPage() {
       if (event.lengthComputable) setImportProgress(Math.round((event.loaded / event.total) * 100));
     };
     xhr.onload = () => {
-      setImporting(false);
       if (xhr.status >= 200 && xhr.status < 300) {
-        setImportOpen(false);
-        void load();
+        try {
+          const artifact = JSON.parse(xhr.responseText) as Artifact;
+          void createImportedDraft(artifact.id);
+        } catch {
+          setImporting(false);
+          setError(t("release.errorImport"));
+        }
       } else {
+        setImporting(false);
         setError(xhr.responseText.trim() || t("release.errorImport"));
       }
     };
@@ -258,6 +289,31 @@ export function ReleasesPage() {
       setError(t("release.errorImport"));
     };
     xhr.send(file);
+  };
+  const selectImportMap = (value: string) => {
+    setImportMapCode(value);
+    setImportVersion(value ? nextPatch(releases.filter((release) => release.mapCode === value).map((release) => release.version)) : "1.0.0");
+  };
+  const createImportedDraft = async (artifactID: string) => {
+    const created = await request(
+      `${apiRoot}/releases`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: importName.trim(),
+          mapCode: importMapCode,
+          version: importVersion,
+          description: importDescription.trim(),
+          releaseNotes: "",
+          artifactIds: [artifactID],
+          styleVersionId: importStyleVersionID,
+        }),
+      },
+      t("release.errorCreate")
+    );
+    setImporting(false);
+    if (created) setImportOpen(false);
   };
   const selectMap = (value: string) => {
     setMapCode(value);
@@ -405,7 +461,7 @@ export function ReleasesPage() {
                 <TableCell align="right">
                   <Stack direction="row" spacing={0.5} sx={{ justifyContent: "flex-end" }}>
                     {release.status === "draft" && (
-                      <Button size="small" disabled={saving} onClick={() => void publish(release.id)}>
+                      <Button size="small" disabled={saving || !release.artifactIds.every((id) => artifacts.find((artifact) => artifact.id === id)?.cacheStatus === "ready")} onClick={() => void publish(release.id)}>
                         {t("release.publish")}
                       </Button>
                     )}
@@ -443,7 +499,20 @@ export function ReleasesPage() {
         <DialogContent dividers>
           <Stack spacing={2.5}>
             <Typography variant="body2" color="text.secondary">{t("release.importDescription")}</Typography>
+            <FormControl fullWidth size="small">
+              <InputLabel>{t("release.existingMap")}</InputLabel>
+              <Select value={importMapCode} label={t("release.existingMap")} onChange={(event) => selectImportMap(event.target.value)}>
+                <MenuItem value=""><em>{t("release.newMap")}</em></MenuItem>
+                {maps.map((map) => <MenuItem key={map.mapCode} value={map.mapCode}>{map.name} — {map.mapCode}</MenuItem>)}
+              </Select>
+            </FormControl>
             <TextField label={t("release.importName")} value={importName} onChange={(event) => setImportName(event.target.value)} required fullWidth />
+            <TextField label={t("release.version")} value={importVersion} onChange={(event) => setImportVersion(event.target.value)} required fullWidth />
+            <TextField label={t("release.description")} value={importDescription} onChange={(event) => setImportDescription(event.target.value)} multiline minRows={2} slotProps={{ htmlInput: { maxLength: 2000 } }} />
+            <TextField select label={t("release.styleVersion")} value={importStyleVersionID} onChange={(event) => setImportStyleVersionID(event.target.value)} fullWidth>
+              <MenuItem value="">{t("release.styleAutomatic")}</MenuItem>
+              {styles.map((style) => <MenuItem key={style.id} value={style.id}>{style.name}</MenuItem>)}
+            </TextField>
             <TextField select label={t("release.importDataType")} value={importDataType} onChange={(event) => setImportDataType(event.target.value)} required fullWidth>
               <MenuItem value="" disabled>{t("release.importDataTypePlaceholder")}</MenuItem>
               {importDataTypes.map((dataType) => <MenuItem key={dataType} value={dataType}>{t(`datasets.type.${dataType}`)}</MenuItem>)}
@@ -463,7 +532,7 @@ export function ReleasesPage() {
         </DialogContent>
         <DialogActions sx={{ px: 3, py: 2 }}>
           <Button onClick={() => setImportOpen(false)} disabled={importing}>{t("release.cancel")}</Button>
-          <Button variant="contained" startIcon={<FileUp size={16} />} onClick={importMBTiles} disabled={!accessToken || !importFile || !importName.trim() || !importDataType || importing}>{t("release.importStart")}</Button>
+          <Button variant="contained" startIcon={<FileUp size={16} />} onClick={importMBTiles} disabled={!accessToken || !importFile || !importName.trim() || !importDataType || !isSemVer(importVersion) || importing}>{t("release.importAndCreate")}</Button>
         </DialogActions>
       </Dialog>
 
@@ -473,12 +542,12 @@ export function ReleasesPage() {
           <Stack spacing={2}>
             <Typography variant="body2" color="text.secondary">{t("release.importStyleDescription")}</Typography>
             <TextField label={t("release.styleName")} value={styleName} onChange={(event) => setStyleName(event.target.value)} required fullWidth />
-            <TextField label="style.json" type="file" required onChange={(event) => setStyleFile((event.target as HTMLInputElement).files?.[0] ?? null)} slotProps={{ htmlInput: { accept: ".json,application/json" } }} />
+            <StyleFilePicker label="style.json" emptyLabel={t("release.chooseFile")} file={styleFile} accept=".json,application/json" onChange={setStyleFile} />
             <Typography variant="subtitle2">{t("release.spriteFiles")}</Typography>
-            <TextField label="sprite.json" type="file" onChange={(event) => setSpriteJSON((event.target as HTMLInputElement).files?.[0] ?? null)} slotProps={{ htmlInput: { accept: ".json,application/json" } }} />
-            <TextField label="sprite.png" type="file" onChange={(event) => setSpritePNG((event.target as HTMLInputElement).files?.[0] ?? null)} slotProps={{ htmlInput: { accept: ".png,image/png" } }} />
-            <TextField label="sprite@2x.json" type="file" onChange={(event) => setSpriteJSON2x((event.target as HTMLInputElement).files?.[0] ?? null)} slotProps={{ htmlInput: { accept: ".json,application/json" } }} />
-            <TextField label="sprite@2x.png" type="file" onChange={(event) => setSpritePNG2x((event.target as HTMLInputElement).files?.[0] ?? null)} slotProps={{ htmlInput: { accept: ".png,image/png" } }} />
+            <StyleFilePicker label="sprite.json" emptyLabel={t("release.chooseFile")} file={spriteJSON} accept=".json,application/json" onChange={setSpriteJSON} />
+            <StyleFilePicker label="sprite.png" emptyLabel={t("release.chooseFile")} file={spritePNG} accept=".png,image/png" onChange={setSpritePNG} />
+            <StyleFilePicker label="sprite@2x.json" emptyLabel={t("release.chooseFile")} file={spriteJSON2x} accept=".json,application/json" onChange={setSpriteJSON2x} />
+            <StyleFilePicker label="sprite@2x.png" emptyLabel={t("release.chooseFile")} file={spritePNG2x} accept=".png,image/png" onChange={setSpritePNG2x} />
             <Alert severity="info">{t("release.styleGlyphNotice")}</Alert>
           </Stack>
         </DialogContent>

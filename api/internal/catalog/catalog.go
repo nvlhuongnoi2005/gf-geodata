@@ -175,6 +175,7 @@ type AccessGrant struct {
 }
 
 var ErrAccessGrantNotFound = errors.New("access grant not found")
+var ErrReleaseArtifactsNotReady = errors.New("release artifacts are not ready")
 
 type ReleaseArtifact struct {
 	ReleaseID, ArtifactID, SourceName, OutputObjectKey string
@@ -513,13 +514,35 @@ func (s *Store) CompleteArtifactCache(ctx context.Context, artifact CacheArtifac
 	if servingBackend != "tileserver_cache" && servingBackend != "geodata_mbtiles" {
 		return errors.New("invalid tile serving backend")
 	}
-	_, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	result, err := tx.Exec(ctx, `
 UPDATE conversion_jobs
 SET tile_cache_status='ready', tile_serving_backend=$2, tile_server_dataset=$3, tile_format=$4,
     tile_bounds=$5::jsonb, tile_vector_layers=$6::jsonb, min_zoom=$7, max_zoom=$8,
     tile_cache_warmed_at=NOW(), tile_cache_failure=NULL
 WHERE id=$1 AND status='succeeded' AND tile_cache_status='warming'`, artifact.ID, servingBackend, tile.TileServerDataset, tile.TileFormat, defaultJSON(tile.Bounds, "[-180,-85.051129,180,85.051129]"), defaultJSON(tile.VectorLayers, "[]"), tile.MinZoom, tile.MaxZoom)
-	return err
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return ErrConversionJobNotActive
+	}
+	// A draft may be created as soon as a direct MBTiles upload has completed.
+	// Mirror the later materialization result into every draft that references
+	// it, so publication and TileJSON see the inspected metadata once ready.
+	_, err = tx.Exec(ctx, `
+UPDATE map_release_artifacts
+SET serving_backend=$2, tile_server_dataset=$3, warm_status='ready', warmed_at=NOW(),
+    tile_format=$4, bounds=$5::jsonb, vector_layers=$6::jsonb, min_zoom=$7, max_zoom=$8
+WHERE artifact_id=$1 AND warm_status<>'ready'`, artifact.ID, servingBackend, tile.TileServerDataset, tile.TileFormat, defaultJSON(tile.Bounds, "[-180,-85.051129,180,85.051129]"), defaultJSON(tile.VectorLayers, "[]"), tile.MinZoom, tile.MaxZoom)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) FailArtifactCache(ctx context.Context, artifactID, message string) error {
@@ -539,10 +562,10 @@ func (s *Store) CreateRelease(ctx context.Context, release MapRelease, artifactI
 	for _, id := range artifactIDs {
 		result, err := tx.Exec(ctx, `
 INSERT INTO map_release_artifacts (release_id,artifact_id,serving_backend,tile_server_dataset,warm_status,warmed_at,tile_format,bounds,min_zoom,max_zoom,vector_layers)
-SELECT $1,id,'geodata_mbtiles',NULL,'ready',tile_cache_warmed_at,tile_format,tile_bounds,min_zoom,max_zoom,tile_vector_layers
+SELECT $1,id,'geodata_mbtiles',tile_server_dataset,tile_cache_status,tile_cache_warmed_at,tile_format,tile_bounds,min_zoom,max_zoom,tile_vector_layers
 FROM conversion_jobs
 WHERE id=$2 AND status='succeeded' AND output_object_key IS NOT NULL
-  AND tile_cache_status='ready' AND tile_serving_backend='geodata_mbtiles'`, release.ID, id)
+  AND tile_cache_status IN ('pending','warming','ready','failed') AND tile_serving_backend='geodata_mbtiles'`, release.ID, id)
 		if err != nil {
 			return err
 		}
@@ -674,9 +697,9 @@ func (s *Store) StartReleasePublish(ctx context.Context, id string) error {
 	default:
 		return ErrConversionJobNotActive
 	}
-	// Newly-created drafts only reference MBTiles already present on GeoData's
-	// serving volume, so publication is a metadata transition. Preserve the
-	// asynchronous path for drafts created before cache readiness existed.
+	// A direct MBTiles upload may already have a draft while the serving-store
+	// warmer validates it. Publishing must not move that draft into a state no
+	// worker owns; the caller retries after the artifact becomes ready.
 	var cacheReady bool
 	err = tx.QueryRow(ctx, `
 SELECT COALESCE(bool_and(serving_backend='geodata_mbtiles' AND warm_status='ready'), false)
@@ -685,10 +708,10 @@ WHERE release_id=$1`, id).Scan(&cacheReady)
 	if err != nil {
 		return err
 	}
-	status := "publishing"
-	if cacheReady {
-		status = "published"
+	if !cacheReady {
+		return ErrReleaseArtifactsNotReady
 	}
+	status := "published"
 	result, err := tx.Exec(ctx, `
 UPDATE map_releases
 SET status=$2::VARCHAR(32),
