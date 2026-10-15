@@ -198,6 +198,7 @@ func main() {
 	mux.Handle("POST /api/geodata/v1/jobs/{jobID}/cancel", app.requireAdmin(http.HandlerFunc(app.cancelConversionJob)))
 	mux.Handle("DELETE /api/geodata/v1/jobs/{jobID}", app.requireAdmin(http.HandlerFunc(app.deleteConversionJob)))
 	mux.Handle("GET /api/geodata/v1/artifacts", app.requireAdmin(http.HandlerFunc(app.listConversionArtifacts)))
+	mux.Handle("PUT /api/geodata/v1/artifacts/import", app.requireAdmin(http.HandlerFunc(app.importMBTiles)))
 	mux.Handle("GET /api/geodata/v1/releases", app.requireAdmin(http.HandlerFunc(app.listReleases)))
 	mux.Handle("POST /api/geodata/v1/releases", app.requireAdmin(http.HandlerFunc(app.createRelease)))
 	mux.Handle("POST /api/geodata/v1/releases/{releaseID}/publish", app.requireAdmin(http.HandlerFunc(app.publishRelease)))
@@ -884,6 +885,109 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(record.RawUpload)
+}
+
+// importMBTiles accepts a pre-built MBTiles file from the release workspace.
+// The original remains in raw storage for provenance and an immutable copy is
+// placed in derived storage for the GeoData serving-store warmer. No tiling or
+// conversion job is queued.
+func (s *server) importMBTiles(w http.ResponseWriter, r *http.Request) {
+	fileName := r.URL.Query().Get("filename")
+	if fileName == "" || len(fileName) > 255 || filepath.Base(fileName) != fileName || strings.ContainsAny(fileName, "/\\\x00") {
+		http.Error(w, "invalid file name", http.StatusBadRequest)
+		return
+	}
+	format, supported := catalog.SourceFormat(fileName)
+	if !supported || format != "mbtiles" {
+		http.Error(w, "only MBTiles files can be imported here", http.StatusUnsupportedMediaType)
+		return
+	}
+	dataName := strings.TrimSpace(r.URL.Query().Get("name"))
+	if dataName == "" || len([]rune(dataName)) > 200 {
+		http.Error(w, "data name must be between 1 and 200 characters", http.StatusBadRequest)
+		return
+	}
+	dataType := strings.TrimSpace(r.URL.Query().Get("dataType"))
+	if !catalog.IsDataType(dataType) {
+		http.Error(w, "invalid data type", http.StatusBadRequest)
+		return
+	}
+	if r.ContentLength < 1 || r.ContentLength > s.maxUploadBytes {
+		http.Error(w, "file size is missing or exceeds the upload limit", http.StatusRequestEntityTooLarge)
+		return
+	}
+	select {
+	case s.uploadSlots <- struct{}{}:
+		defer func() { <-s.uploadSlots }()
+	case <-r.Context().Done():
+		http.Error(w, "upload canceled", http.StatusRequestTimeout)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, s.maxUploadBytes)
+	rawID, err := newUUID()
+	if err != nil {
+		http.Error(w, "could not start MBTiles import", http.StatusInternalServerError)
+		return
+	}
+	artifactID, err := newUUID()
+	if err != nil {
+		http.Error(w, "could not start MBTiles import", http.StatusInternalServerError)
+		return
+	}
+	createdAt := time.Now().UTC()
+	rawKey := fmt.Sprintf("incoming/%s/%s/%s", createdAt.Format("2006/01"), rawID, fileName)
+	artifactKey := fmt.Sprintf("artifacts/imports/%s.mbtiles", artifactID)
+	hasher := sha256.New()
+	_, err = s.uploader.Upload(r.Context(), &s3.PutObjectInput{
+		Bucket: aws.String(s.bucket), Key: aws.String(rawKey), Body: io.TeeReader(r.Body, hasher),
+		ContentLength: aws.Int64(r.ContentLength), ContentType: aws.String("application/x-sqlite3"),
+		Metadata: map[string]string{"upload-id": rawID, "source-file-name": fileName, "imported-at": createdAt.Format(time.RFC3339Nano)},
+	})
+	if err != nil {
+		slog.Error("upload imported MBTiles source", "artifact_id", artifactID, "error", err)
+		http.Error(w, "MBTiles upload failed", http.StatusBadGateway)
+		return
+	}
+	source, err := s.objectStore.GetObject(r.Context(), &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(rawKey)})
+	if err == nil {
+		defer source.Body.Close()
+		_, err = s.uploader.Upload(r.Context(), &s3.PutObjectInput{
+			Bucket: aws.String(s.derivedBucket), Key: aws.String(artifactKey), Body: source.Body,
+			ContentLength: source.ContentLength, ContentType: aws.String("application/x-sqlite3"), Metadata: map[string]string{"format": "mbtiles", "source": "direct-import"},
+		})
+	}
+	if err != nil {
+		slog.Error("store imported MBTiles artifact", "artifact_id", artifactID, "error", err)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		_, _ = s.objectStore.DeleteObject(cleanupCtx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(rawKey)})
+		cancel()
+		http.Error(w, "could not register MBTiles in derived storage", http.StatusBadGateway)
+		return
+	}
+	record := catalog.NewRawUpload{RawUpload: catalog.RawUpload{
+		ID: rawID, Name: dataName, DataType: dataType, FileName: fileName, Format: "mbtiles",
+		ByteSize: r.ContentLength, SHA256: hex.EncodeToString(hasher.Sum(nil)), Status: "converted", CreatedAt: createdAt,
+	}, ObjectKey: rawKey}
+	if subject, ok := r.Context().Value(actorContextKey{}).(string); ok {
+		record.CreatedBy = subject
+	}
+	metadataCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	err = s.store.CreateImportedMBTiles(metadataCtx, record, artifactID, artifactKey)
+	cancel()
+	if err != nil {
+		slog.Error("register imported MBTiles", "artifact_id", artifactID, "error", err)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		_, _ = s.objectStore.DeleteObject(cleanupCtx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(rawKey)})
+		_, _ = s.objectStore.DeleteObject(cleanupCtx, &s3.DeleteObjectInput{Bucket: aws.String(s.derivedBucket), Key: aws.String(artifactKey)})
+		cleanupCancel()
+		http.Error(w, "could not register imported MBTiles", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(catalog.ConversionArtifactView{
+		ID: artifactID, SourceName: dataName, OutputFormat: "mbtiles", CacheStatus: "pending", CreatedAt: createdAt,
+	})
 }
 
 func (s *server) createConversionJob(w http.ResponseWriter, r *http.Request) {

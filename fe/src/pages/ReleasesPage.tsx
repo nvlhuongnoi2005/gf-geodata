@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -11,6 +11,7 @@ import {
   DialogTitle,
   FormControl,
   InputLabel,
+  LinearProgress,
   ListItemText,
   MenuItem,
   OutlinedInput,
@@ -26,7 +27,7 @@ import {
   Typography,
 } from "@mui/material";
 import type { ChipProps } from "@mui/material";
-import { Eye, Plus, Tag } from "lucide-react";
+import { Eye, FileUp, Plus, Tag } from "lucide-react";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 import { ReleasePreviewDialog } from "../components/ReleasePreviewDialog";
@@ -55,6 +56,7 @@ type Release = {
 };
 
 const apiRoot = "/api/geodata/v1";
+const importDataTypes = ["street", "satellite", "administrative", "topographic", "land_use", "hydrology", "other"] as const;
 
 const statusColor: Record<ReleaseStatus, ChipProps["color"]> = {
   draft: "default",
@@ -70,6 +72,7 @@ export function ReleasesPage() {
   const [releases, setReleases] = useState<Release[]>([]);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Release | null>(null);
   const [previewRelease, setPreviewRelease] = useState<Release | null>(null);
   const [name, setName] = useState("");
@@ -78,6 +81,12 @@ export function ReleasesPage() {
   const [description, setDescription] = useState("");
   const [releaseNotes, setReleaseNotes] = useState("");
   const [artifactIDs, setArtifactIDs] = useState<string[]>([]);
+  const importFileInputRef = useRef<HTMLInputElement>(null);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importName, setImportName] = useState("");
+  const [importDataType, setImportDataType] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState(0);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -158,6 +167,43 @@ export function ReleasesPage() {
     setError("");
     setCreateOpen(true);
   };
+  const startImport = () => {
+    setImportFile(null);
+    setImportName("");
+    setImportDataType("");
+    setImportProgress(0);
+    setError("");
+    if (importFileInputRef.current) importFileInputRef.current.value = "";
+    setImportOpen(true);
+  };
+  const importMBTiles = () => {
+    if (!accessToken || !importFile || !importName.trim() || !importDataType || importing) return;
+    const file = importFile;
+    setImporting(true);
+    setImportProgress(0);
+    const params = new URLSearchParams({ filename: file.name, name: importName.trim(), dataType: importDataType });
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", `${apiRoot}/artifacts/import?${params.toString()}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+    xhr.setRequestHeader("Content-Type", "application/x-sqlite3");
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) setImportProgress(Math.round((event.loaded / event.total) * 100));
+    };
+    xhr.onload = () => {
+      setImporting(false);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        setImportOpen(false);
+        void load();
+      } else {
+        setError(xhr.responseText.trim() || t("release.errorImport"));
+      }
+    };
+    xhr.onerror = () => {
+      setImporting(false);
+      setError(t("release.errorImport"));
+    };
+    xhr.send(file);
+  };
   const selectMap = (value: string) => {
     setMapCode(value);
     if (!value) {
@@ -218,14 +264,14 @@ export function ReleasesPage() {
             {t("release.title")}
           </Typography>
         </Box>
-        <Button
-          variant="contained"
-          startIcon={<Plus size={16} />}
-          disabled={!readyArtifacts.length}
-          onClick={startDraft}
-        >
-          {t("release.create")}
-        </Button>
+        <Stack direction="row" spacing={1}>
+          <Button variant="outlined" startIcon={<FileUp size={16} />} onClick={startImport}>
+            {t("release.importMbtiles")}
+          </Button>
+          <Button variant="contained" startIcon={<Plus size={16} />} disabled={!readyArtifacts.length} onClick={startDraft}>
+            {t("release.create")}
+          </Button>
+        </Stack>
       </Stack>
       {!artifacts.length && <Alert severity="info">{t("release.emptyArtifacts")}</Alert>}
       {!!preparingArtifacts.length && (
@@ -332,6 +378,35 @@ export function ReleasesPage() {
           </TableBody>
         </Table>
       </Paper>
+
+      <Dialog open={importOpen} onClose={() => !importing && setImportOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>{t("release.importTitle")}</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2.5}>
+            <Typography variant="body2" color="text.secondary">{t("release.importDescription")}</Typography>
+            <TextField label={t("release.importName")} value={importName} onChange={(event) => setImportName(event.target.value)} required fullWidth />
+            <TextField select label={t("release.importDataType")} value={importDataType} onChange={(event) => setImportDataType(event.target.value)} required fullWidth>
+              <MenuItem value="" disabled>{t("release.importDataTypePlaceholder")}</MenuItem>
+              {importDataTypes.map((dataType) => <MenuItem key={dataType} value={dataType}>{t(`datasets.type.${dataType}`)}</MenuItem>)}
+            </TextField>
+            <Paper component="button" type="button" variant="outlined" onClick={() => importFileInputRef.current?.click()} sx={{ width: "100%", p: 3, borderStyle: "dashed", bgcolor: "background.default", color: "text.primary", cursor: "pointer", "&:hover": { borderColor: "primary.main", bgcolor: "action.hover" } }}>
+              <FileUp size={34} color="#d32f2f" />
+              <Typography component="span" sx={{ display: "block", mt: 1, fontWeight: 700 }}>{importFile?.name ?? t("release.importChooseFile")}</Typography>
+              <Typography component="span" variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>{t("release.importFileHint")}</Typography>
+            </Paper>
+            <input ref={importFileInputRef} type="file" accept=".mbtiles,application/x-sqlite3" hidden onChange={(event) => {
+              const file = event.target.files?.[0] ?? null;
+              setImportFile(file);
+              if (file && !importName.trim()) setImportName(file.name.replace(/\.mbtiles$/i, ""));
+            }} />
+            {importing && <Box><LinearProgress variant="determinate" value={importProgress} /><Typography variant="caption" color="text.secondary">{t("release.importing", { progress: importProgress })}</Typography></Box>}
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button onClick={() => setImportOpen(false)} disabled={importing}>{t("release.cancel")}</Button>
+          <Button variant="contained" startIcon={<FileUp size={16} />} onClick={importMBTiles} disabled={!accessToken || !importFile || !importName.trim() || !importDataType || importing}>{t("release.importStart")}</Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog
         open={createOpen}

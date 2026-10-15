@@ -9,7 +9,7 @@
   "nav.pipeline": "Chuyển đổi dữ liệu",
   "nav.pipelineCaption": "Tác vụ chuyển đổi",
   "nav.styles": "Style Studio",
-  "nav.stylesCaption": "Bản đồ & biểu tượng",
+  "nav.stylesCaption": "Sắp phát triển",
   "nav.releases": "Bản phát hành",
   "nav.releasesCaption": "Quản lý và xuất bản",
   "nav.access": "Quyền truy cập",
@@ -319,5 +319,18 @@
   "release.errorCreate": "Không thể tạo bản nháp. Hãy kiểm tra phiên bản và dữ liệu đã chuyển đổi.",
   "release.errorPublish": "Không thể xuất bản bản nháp này.",
   "release.errorUnpublish": "Không thể thu hồi bản phát hành này.",
-  "release.errorDelete": "Không thể xóa bản phát hành này."
+  "release.errorDelete": "Không thể xóa bản phát hành này.",
+  "release.importMbtiles": "Nhập MBTiles",
+  "release.importTitle": "Nhập dữ liệu MBTiles sẵn có",
+  "release.importDescription": "Tệp được lưu nguyên bản, kiểm tra và đưa vào kho phục vụ GeoData. Không chạy chuyển đổi dữ liệu.",
+  "release.importName": "Tên dữ liệu",
+  "release.importDataType": "Loại dữ liệu",
+  "release.importDataTypePlaceholder": "Chọn loại dữ liệu",
+  "release.importChooseFile": "Chọn tệp MBTiles",
+  "release.importFileHint": "Chỉ chấp nhận tệp .mbtiles",
+  "release.importStart": "Nhập dữ liệu",
+  "release.importing": "Đang tải tệp lên: {{progress}}%",
+  "release.errorImport": "Không thể nhập tệp MBTiles.",
+  "styles.comingSoonTitle": "Style Studio đang được phát triển",
+  "styles.comingSoonDescription": "Công cụ thiết kế style sẽ trở lại sau khi luồng phát hành và phân quyền bản đồ ổn định."
 }

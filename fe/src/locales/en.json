@@ -9,7 +9,7 @@
   "nav.pipeline": "Data conversion",
   "nav.pipelineCaption": "Conversion tasks",
   "nav.styles": "Style Studio",
-  "nav.stylesCaption": "Maps & symbols",
+  "nav.stylesCaption": "Coming soon",
   "nav.releases": "Map releases",
   "nav.releasesCaption": "Manage & publish",
   "nav.access": "Access control",
@@ -319,5 +319,18 @@
   "release.errorCreate": "Could not create the draft. Check the selected version and converted data.",
   "release.errorPublish": "Could not publish this draft.",
   "release.errorUnpublish": "Could not unpublish this release.",
-  "release.errorDelete": "Could not delete this release."
+  "release.errorDelete": "Could not delete this release.",
+  "release.importMbtiles": "Import MBTiles",
+  "release.importTitle": "Import an existing MBTiles file",
+  "release.importDescription": "The file is retained as uploaded, validated, and placed in GeoData serving storage. No data conversion is run.",
+  "release.importName": "Data name",
+  "release.importDataType": "Data type",
+  "release.importDataTypePlaceholder": "Choose a data type",
+  "release.importChooseFile": "Choose MBTiles file",
+  "release.importFileHint": "Only .mbtiles files are accepted",
+  "release.importStart": "Import data",
+  "release.importing": "Uploading file: {{progress}}%",
+  "release.errorImport": "Could not import the MBTiles file.",
+  "styles.comingSoonTitle": "Style Studio is coming soon",
+  "styles.comingSoonDescription": "The style-design tool will return after map publishing and access control workflows are stable."
 }

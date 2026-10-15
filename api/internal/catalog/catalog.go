@@ -319,6 +319,38 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	return err
 }
 
+// CreateImportedMBTiles registers an already-built MBTiles file as a finished
+// artifact. It retains the uploaded source record for traceability, but never
+// places a conversion task in the worker queue. The serving-store warmer is
+// responsible only for validating and materializing the immutable artifact.
+func (s *Store) CreateImportedMBTiles(ctx context.Context, source NewRawUpload, artifactID, outputObjectKey string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err = tx.Exec(ctx, `
+INSERT INTO raw_uploads (
+  id, display_name, data_type, source_file_name, source_format, raw_object_key,
+  byte_size, sha256, status, created_by, created_at
+) VALUES ($1, $2, $3, $4, 'mbtiles', $5, $6, $7, 'converted', NULLIF($8, ''), $9)`,
+		source.ID, source.Name, source.DataType, source.FileName, source.ObjectKey,
+		source.ByteSize, source.SHA256, source.CreatedBy, source.CreatedAt); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `
+INSERT INTO conversion_jobs (
+  id, raw_upload_id, status, min_zoom, max_zoom, output_object_key,
+  created_at, started_at, finished_at, progress, current_step,
+  tile_cache_status, tile_serving_backend
+) VALUES ($1, $2, 'succeeded', 0, 24, $3, $4, $4, $4, 100, 'succeeded', 'pending', 'geodata_mbtiles')`,
+		artifactID, source.ID, outputObjectKey, source.CreatedAt); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Store) CreateConversionJob(ctx context.Context, id, rawUploadID string, minZoom, maxZoom int, layerName string) (ConversionJob, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -472,8 +504,9 @@ func (s *Store) CompleteArtifactCache(ctx context.Context, artifact CacheArtifac
 	_, err := s.pool.Exec(ctx, `
 UPDATE conversion_jobs
 SET tile_cache_status='ready', tile_serving_backend=$2, tile_server_dataset=$3, tile_format=$4,
-    tile_bounds=$5::jsonb, tile_vector_layers=$6::jsonb, tile_cache_warmed_at=NOW(), tile_cache_failure=NULL
-WHERE id=$1 AND status='succeeded' AND tile_cache_status='warming'`, artifact.ID, servingBackend, tile.TileServerDataset, tile.TileFormat, defaultJSON(tile.Bounds, "[-180,-85.051129,180,85.051129]"), defaultJSON(tile.VectorLayers, "[]"))
+    tile_bounds=$5::jsonb, tile_vector_layers=$6::jsonb, min_zoom=$7, max_zoom=$8,
+    tile_cache_warmed_at=NOW(), tile_cache_failure=NULL
+WHERE id=$1 AND status='succeeded' AND tile_cache_status='warming'`, artifact.ID, servingBackend, tile.TileServerDataset, tile.TileFormat, defaultJSON(tile.Bounds, "[-180,-85.051129,180,85.051129]"), defaultJSON(tile.VectorLayers, "[]"), tile.MinZoom, tile.MaxZoom)
 	return err
 }
 

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import {
   AppBar,
   Avatar,
@@ -56,10 +56,6 @@ import { PipelinePage } from "../pages/PipelinePage";
 import { ReleasesPage } from "../pages/ReleasesPage";
 import { AccessPage } from "../pages/AccessPage";
 
-const StyleStudioPage = lazy(async () => ({
-  default: (await import("../pages/StyleStudioPage")).StyleStudioPage,
-}));
-
 const drawerWidth = 278;
 type PageKey = "overview" | "datasets" | "pipeline" | "styles" | "releases" | "access";
 const mapLoginUrl = import.meta.env.VITE_MAP_LOGIN_URL || "http://webgis.localhost/login";
@@ -75,9 +71,9 @@ const nav = [
   { key: "overview", label: "nav.overview", caption: "nav.overviewCaption", icon: Gauge },
   { key: "datasets", label: "nav.datasets", caption: "nav.datasetsCaption", icon: Database },
   { key: "pipeline", label: "nav.pipeline", caption: "nav.pipelineCaption", icon: Workflow },
-  { key: "styles", label: "nav.styles", caption: "nav.stylesCaption", icon: Paintbrush },
   { key: "releases", label: "nav.releases", caption: "nav.releasesCaption", icon: Send },
   { key: "access", label: "nav.access", caption: "nav.accessCaption", icon: ShieldCheck },
+  { key: "styles", label: "nav.styles", caption: "nav.stylesCaption", icon: Paintbrush },
 ] as const;
 
 function BrandMark({ size = 42 }: { size?: number }) {
@@ -375,20 +371,6 @@ function SessionGate({ children }: { children: ReactNode }) {
     );
 
   return <>{children}</>;
-}
-
-function PageLoading() {
-  const { t } = useI18n();
-  return (
-    <Box sx={{ minHeight: 380, display: "grid", placeItems: "center" }}>
-      <Stack spacing={1.5} sx={{ alignItems: "center" }}>
-        <CircularProgress aria-label={t("common.loading")} />
-        <Typography variant="body2" color="text.secondary">
-          {t("common.loading")}
-        </Typography>
-      </Stack>
-    </Box>
-  );
 }
 
 export function AdminShell() {
@@ -700,13 +682,15 @@ export function AdminShell() {
             {activePage === "overview" && <DashboardPage />}
             {activePage === "datasets" && <DatasetsPage />}
             {activePage === "pipeline" && <PipelinePage />}
-            {activePage === "styles" && (
-              <Suspense fallback={<PageLoading />}>
-                <StyleStudioPage />
-              </Suspense>
-            )}
             {activePage === "releases" && <ReleasesPage />}
             {activePage === "access" && <AccessPage />}
+            {activePage === "styles" && (
+              <Paper sx={{ maxWidth: 680, mx: "auto", mt: 5, p: { xs: 3, sm: 5 }, textAlign: "center" }}>
+                <Paintbrush size={36} color="#d32f2f" />
+                <Typography variant="h5" sx={{ mt: 2, fontWeight: 750 }}>{t("styles.comingSoonTitle")}</Typography>
+                <Typography color="text.secondary" sx={{ mt: 1 }}>{t("styles.comingSoonDescription")}</Typography>
+              </Paper>
+            )}
           </Box>
         </Box>
       </Box>
