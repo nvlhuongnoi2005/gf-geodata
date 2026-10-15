@@ -101,7 +101,8 @@ type ConversionJobView struct {
 }
 
 // ConversionArtifactView is the safe, browser-facing metadata for a successful
-// MBTiles conversion. Object keys stay in ConversionArtifact only.
+// MBTiles conversion. CacheStatus makes the hand-off to TileServer observable
+// without exposing an object key or a storage implementation detail.
 type ConversionArtifactView struct {
 	ID           string    `json:"id"`
 	SourceName   string    `json:"sourceName"`
@@ -122,7 +123,7 @@ type ConversionArtifact struct {
 // CacheArtifact is an internal cache-warming work item. Object keys remain
 // private: only the WebGIS-local warmer receives them.
 type CacheArtifact struct {
-	ID, OutputObjectKey string
+	ID, OutputObjectKey, DataType, SourceFormat string
 }
 
 type MapRelease struct {
@@ -387,7 +388,7 @@ func (s *Store) ListConversionArtifacts(ctx context.Context, limit int) ([]Conve
 	SELECT j.id, r.display_name, 'mbtiles', COALESCE(j.tile_cache_status,'pending'), j.min_zoom, j.max_zoom, j.finished_at
 FROM conversion_jobs j
 JOIN raw_uploads r ON r.id = j.raw_upload_id
-	WHERE j.status = 'succeeded' AND j.output_object_key IS NOT NULL AND COALESCE(j.tile_cache_status,'pending') = 'ready'
+	WHERE j.status = 'succeeded' AND j.output_object_key IS NOT NULL
 ORDER BY j.finished_at DESC
 LIMIT $1`, limit)
 	if err != nil {
@@ -434,16 +435,17 @@ func (s *Store) ClaimCacheArtifact(ctx context.Context) (*CacheArtifact, error) 
 	defer func() { _ = tx.Rollback(ctx) }()
 	artifact := &CacheArtifact{}
 	err = tx.QueryRow(ctx, `
-SELECT id, output_object_key
-FROM conversion_jobs
-WHERE status='succeeded' AND output_object_key IS NOT NULL
+SELECT j.id, j.output_object_key, r.data_type, r.source_format
+FROM conversion_jobs j
+JOIN raw_uploads r ON r.id = j.raw_upload_id
+WHERE j.status='succeeded' AND j.output_object_key IS NOT NULL
   AND (
-    tile_cache_status='pending' OR
-    (tile_cache_status='failed' AND COALESCE(tile_cache_last_attempt_at, TO_TIMESTAMP(0)) < NOW() - INTERVAL '5 minutes')
+	 j.tile_cache_status='pending' OR
+	 (j.tile_cache_status='failed' AND COALESCE(j.tile_cache_last_attempt_at, TO_TIMESTAMP(0)) < NOW() - INTERVAL '5 minutes')
   )
-ORDER BY CASE tile_cache_status WHEN 'pending' THEN 0 ELSE 1 END, finished_at NULLS LAST, created_at
+ORDER BY CASE j.tile_cache_status WHEN 'pending' THEN 0 ELSE 1 END, j.finished_at NULLS LAST, j.created_at
 FOR UPDATE SKIP LOCKED
-LIMIT 1`).Scan(&artifact.ID, &artifact.OutputObjectKey)
+LIMIT 1`).Scan(&artifact.ID, &artifact.OutputObjectKey, &artifact.DataType, &artifact.SourceFormat)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, tx.Commit(ctx)
 	}

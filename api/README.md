@@ -14,18 +14,21 @@ artifact key and final status. It uses Tilemaker's built-in
 OpenMapTiles-compatible schema for OSM PBF and GDAL for the other supported
 formats.
 
-Successful conversions are exposed to administrators as private artifacts:
+Successful conversions are exposed to administrators as private artifacts,
+including their TileServer preparation state:
 
 - `GET /api/geodata/v1/artifacts` lists safe artifact metadata.
 
 Each successful conversion is warmed before it is offered for a release. The
 cache-warmer beside the existing WebGIS TileServer copies the immutable MBTiles
 file from `geodata-derived` into TileServer's `tile-data` PVC with an atomic
-rename, restarts only the TileServer Deployment through a narrowly scoped
-service account, then verifies `/datas/{dataset}.json`. Its cache state is
-recorded on the conversion job. `GET /artifacts` and release creation expose
-only artifacts with state `ready`; publishing one is therefore an immediate
-catalog transition rather than a second full-object transfer. The gateway
+rename, preserves a producer-defined MBTiles `type` or supplies the WebGIS
+`baselayer`/`overlay` role automatically, restarts only the TileServer
+Deployment through a narrowly scoped service account, then verifies
+`/datas/{dataset}.json`. Its cache state is recorded on the conversion job.
+`GET /artifacts` exposes that state, while release creation accepts only
+artifacts with state `ready`; publishing one is therefore an immediate catalog
+transition rather than a second full-object transfer. The gateway
 continues to enforce GeoData access control, while its hot path proxies
 TileServer's local MBTiles read rather than issuing an S3 request per tile.
 

@@ -237,7 +237,8 @@ Publishing no longer expands one MBTiles file into a large number of S3 tile
 objects. After conversion the normal worker writes the immutable source to
 `geodata-derived`; then the separate cache warmer in namespace `webgis` mounts
 the existing `tile-data` PVC under its `mbtiles/geodata` directory, downloads
-the MBTiles once, activates it atomically, rolls only `webgis/tile-server`, and
+the MBTiles once, supplies missing WebGIS `baselayer` or `overlay` metadata,
+activates it atomically, rolls only `webgis/tile-server`, and
 waits for `/datas/{dataset}.json`. The warmer records the artifact as `ready`.
 Only ready artifacts can be selected for a draft, so publishing is a fast
 metadata transition. The GeoData tile gateway preserves authentication and

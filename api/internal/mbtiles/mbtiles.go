@@ -38,6 +38,39 @@ type Metadata struct {
 	VectorLayers []VectorLayer
 }
 
+// EnsureServingRole adds the TileServer role used by the existing WebGIS
+// catalog only when an MBTiles producer did not set one itself. It operates on
+// the local cache copy, never on the immutable object stored in S3.
+func EnsureServingRole(ctx context.Context, path, role string) error {
+	if role != "baselayer" && role != "overlay" {
+		return fmt.Errorf("unsupported TileServer role %q", role)
+	}
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS metadata (name TEXT, value TEXT)`); err != nil {
+		return fmt.Errorf("create MBTiles metadata table: %w", err)
+	}
+	var current string
+	err = db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE lower(name) = 'type' LIMIT 1`).Scan(&current)
+	if err == nil && strings.TrimSpace(current) != "" {
+		return nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read MBTiles serving role: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM metadata WHERE lower(name) = 'type'`); err != nil {
+		return fmt.Errorf("clear empty MBTiles serving role: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO metadata(name, value) VALUES ('type', ?)`, role); err != nil {
+		return fmt.Errorf("set MBTiles serving role: %w", err)
+	}
+	return nil
+}
+
 func open(path string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
 	if err != nil {

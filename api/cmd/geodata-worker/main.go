@@ -118,7 +118,7 @@ func (w *worker) warmOne(parent context.Context) bool {
 	if artifact == nil {
 		return false
 	}
-	warmed, err := w.warmArtifact(parent, artifact.ID, artifact.OutputObjectKey)
+	warmed, err := w.warmArtifact(parent, artifact.ID, artifact.OutputObjectKey, artifact.DataType, artifact.SourceFormat)
 	if err != nil {
 		slog.Error("warm artifact cache failed", "artifact_id", artifact.ID, "error", err)
 		failCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
@@ -244,7 +244,9 @@ func (w *worker) publishOne(parent context.Context) bool {
 }
 
 func (w *worker) publishArtifact(ctx context.Context, releaseID string, artifact *catalog.ReleaseArtifact) error {
-	warmed, err := w.warmArtifact(ctx, artifact.ArtifactID, artifact.OutputObjectKey)
+	// Drafts created by legacy code may not carry source classification. A
+	// default basemap role keeps that compatibility path safe.
+	warmed, err := w.warmArtifact(ctx, artifact.ArtifactID, artifact.OutputObjectKey, "", "")
 	if err != nil {
 		return err
 	}
@@ -254,7 +256,7 @@ func (w *worker) publishArtifact(ctx context.Context, releaseID string, artifact
 	return w.store.CompleteReleasePublish(storeCtx, releaseID, warmed)
 }
 
-func (w *worker) warmArtifact(ctx context.Context, artifactID, outputObjectKey string) (catalog.ReleaseArtifact, error) {
+func (w *worker) warmArtifact(ctx context.Context, artifactID, outputObjectKey, dataType, sourceFormat string) (catalog.ReleaseArtifact, error) {
 	if err := os.MkdirAll(w.tileCacheRoot, 0o750); err != nil {
 		return catalog.ReleaseArtifact{}, fmt.Errorf("create TileServer cache root: %w", err)
 	}
@@ -281,6 +283,12 @@ func (w *worker) warmArtifact(ctx context.Context, artifactID, outputObjectKey s
 	if closeErr != nil {
 		return catalog.ReleaseArtifact{}, closeErr
 	}
+	// WebGIS classifies datasets from the standard MBTiles `type` metadata.
+	// Preserve a producer-specified role; otherwise derive a safe default from
+	// the source classification selected at upload time.
+	if err := mbtiles.EnsureServingRole(ctx, temporary, defaultTileServerRole(dataType, sourceFormat)); err != nil {
+		return catalog.ReleaseArtifact{}, fmt.Errorf("set cached MBTiles serving role: %w", err)
+	}
 	metadata, err := mbtiles.ReadMetadata(ctx, temporary)
 	if err != nil {
 		return catalog.ReleaseArtifact{}, fmt.Errorf("read cached MBTiles metadata: %w", err)
@@ -305,6 +313,16 @@ func (w *worker) warmArtifact(ctx context.Context, artifactID, outputObjectKey s
 		return catalog.ReleaseArtifact{}, err
 	}
 	return catalog.ReleaseArtifact{ArtifactID: artifactID, TileServerDataset: dataset, TileFormat: metadata.Format, MinZoom: metadata.MinZoom, MaxZoom: metadata.MaxZoom, Bounds: bounds, VectorLayers: vectorLayers}, nil
+}
+
+func defaultTileServerRole(dataType, sourceFormat string) string {
+	// Full OSM PBF conversions contain a complete map and are useful as a base
+	// map. The remaining thematic/vector source categories are overlays by
+	// default. A producer can always override this with MBTiles metadata.
+	if sourceFormat == "osm_pbf" || dataType == "satellite" || dataType == "topographic" || dataType == "" {
+		return "baselayer"
+	}
+	return "overlay"
 }
 
 // The WebGIS TileServer image indexes MBTiles at process start. A narrowly

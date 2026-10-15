@@ -35,6 +35,7 @@ type Artifact = {
   id: string;
   sourceName: string;
   outputFormat: "mbtiles";
+  cacheStatus: "pending" | "warming" | "ready" | "failed";
   minZoom: number;
   maxZoom: number;
 };
@@ -101,13 +102,21 @@ export function ReleasesPage() {
     void load();
   }, [accessToken]);
   const hasPublishingRelease = releases.some((release) => release.status === "publishing");
+  const readyArtifacts = artifacts.filter((artifact) => artifact.cacheStatus === "ready");
+  const preparingArtifacts = artifacts.filter(
+    (artifact) => artifact.cacheStatus === "pending" || artifact.cacheStatus === "warming"
+  );
+  const failedArtifacts = artifacts.filter((artifact) => artifact.cacheStatus === "failed");
   useEffect(() => {
-    if (!hasPublishingRelease) return;
+    // A conversion completes before its MBTiles file is registered in
+    // TileServer. Keep the release page current through that short hand-off,
+    // rather than leaving a user with a stale empty list.
+    if (!hasPublishingRelease && !preparingArtifacts.length) return;
     const timer = window.setInterval(() => {
       void load();
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [accessToken, hasPublishingRelease]);
+  }, [accessToken, hasPublishingRelease, preparingArtifacts.length]);
 
   const maps = useMemo(() => {
     const result = new Map<string, Release>();
@@ -142,7 +151,7 @@ export function ReleasesPage() {
     setVersion("1.0.0");
     setDescription("");
     setReleaseNotes("");
-    setArtifactIDs(artifacts[0] ? [artifacts[0].id] : []);
+    setArtifactIDs(readyArtifacts[0] ? [readyArtifacts[0].id] : []);
     setError("");
     setCreateOpen(true);
   };
@@ -209,13 +218,23 @@ export function ReleasesPage() {
         <Button
           variant="contained"
           startIcon={<Plus size={16} />}
-          disabled={!artifacts.length}
+          disabled={!readyArtifacts.length}
           onClick={startDraft}
         >
           {t("release.create")}
         </Button>
       </Stack>
       {!artifacts.length && <Alert severity="info">{t("release.emptyArtifacts")}</Alert>}
+      {!!preparingArtifacts.length && (
+        <Alert severity="info">
+          {t("release.artifactsPreparing", { count: preparingArtifacts.length })}
+        </Alert>
+      )}
+      {!!failedArtifacts.length && (
+        <Alert severity="warning">
+          {t("release.artifactsNeedAttention", { count: failedArtifacts.length })}
+        </Alert>
+      )}
       {error && (
         <Alert severity="error" onClose={() => setError("")}>
           {error}
@@ -389,7 +408,7 @@ export function ReleasesPage() {
                     .join(", ")
                 }
               >
-                {artifacts.map((artifact) => (
+                {readyArtifacts.map((artifact) => (
                   <MenuItem value={artifact.id} key={artifact.id}>
                     <Checkbox checked={artifactIDs.includes(artifact.id)} />
                     <ListItemText
