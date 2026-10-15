@@ -39,6 +39,7 @@ var (
 	ErrConversionJobNotActive    = errors.New("conversion job is not active")
 	ErrConversionJobNotRemovable = errors.New("conversion job is not removable")
 	ErrReleaseVersionExists      = errors.New("release map code and version already exist")
+	ErrReleaseSlugExists         = errors.New("release URL identifier already exists")
 	ErrReleaseArtifactAssigned   = errors.New("release artifact is already assigned")
 )
 
@@ -629,8 +630,11 @@ func (s *Store) CreateRelease(ctx context.Context, release MapRelease, artifactI
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err = tx.Exec(ctx, `INSERT INTO map_releases (id,name,map_code,version,slug,description,release_notes,visibility,style_version_id,created_by,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::uuid,NULLIF($10,''),$11,$11)`, release.ID, release.Name, release.MapCode, release.Version, release.Slug, release.Description, release.ReleaseNotes, release.Visibility, release.StyleVersionID, release.CreatedBy, release.CreatedAt); err != nil {
-		if uniqueConstraint(err, "map_releases_map_code_version_unique") || uniqueConstraint(err, "map_releases_slug_key") {
+		if uniqueConstraint(err, "map_releases_map_code_version_unique") {
 			return ErrReleaseVersionExists
+		}
+		if uniqueConstraint(err, "map_releases_slug_key") {
+			return ErrReleaseSlugExists
 		}
 		return err
 	}

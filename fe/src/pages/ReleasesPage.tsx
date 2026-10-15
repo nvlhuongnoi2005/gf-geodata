@@ -63,9 +63,23 @@ type StyleVersion = {
 };
 
 const apiRoot = "/api/geodata/v1";
-const importDataTypes = ["street", "satellite", "administrative", "topographic", "land_use", "hydrology", "other"] as const;
+const importDataTypes = [
+  "street",
+  "satellite",
+  "administrative",
+  "topographic",
+  "land_use",
+  "hydrology",
+  "other",
+] as const;
 
-function StyleFilePicker({ label, emptyLabel, file, accept, onChange }: {
+function StyleFilePicker({
+  label,
+  emptyLabel,
+  file,
+  accept,
+  onChange,
+}: {
   label: string;
   emptyLabel: string;
   file: File | null;
@@ -74,10 +88,22 @@ function StyleFilePicker({ label, emptyLabel, file, accept, onChange }: {
 }) {
   return (
     <Box>
-      <Typography variant="body2" sx={{ mb: 0.75, fontWeight: 650 }}>{label}</Typography>
-      <Button component="label" variant="outlined" fullWidth sx={{ justifyContent: "flex-start", textTransform: "none", minHeight: 42 }}>
+      <Typography variant="body2" sx={{ mb: 0.75, fontWeight: 650 }}>
+        {label}
+      </Typography>
+      <Button
+        component="label"
+        variant="outlined"
+        fullWidth
+        sx={{ justifyContent: "flex-start", textTransform: "none", minHeight: 42 }}
+      >
         {file?.name ?? emptyLabel}
-        <input hidden type="file" accept={accept} onChange={(event) => onChange(event.currentTarget.files?.[0] ?? null)} />
+        <input
+          hidden
+          type="file"
+          accept={accept}
+          onChange={(event) => onChange(event.currentTarget.files?.[0] ?? null)}
+        />
       </Button>
     </Box>
   );
@@ -92,7 +118,7 @@ const statusColor: Record<ReleaseStatus, ChipProps["color"]> = {
 };
 
 export function ReleasesPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, authenticatedFetch, ensureAccessToken } = useAuth();
   const { t } = useI18n();
   const [releases, setReleases] = useState<Release[]>([]);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
@@ -134,11 +160,12 @@ export function ReleasesPage() {
     try {
       const headers = { Authorization: `Bearer ${accessToken}` };
       const [releaseResponse, artifactResponse, styleResponse] = await Promise.all([
-        fetch(`${apiRoot}/releases`, { headers }),
-        fetch(`${apiRoot}/artifacts`, { headers }),
-        fetch(`${apiRoot}/styles`, { headers }),
+        authenticatedFetch(`${apiRoot}/releases`, { headers }),
+        authenticatedFetch(`${apiRoot}/artifacts`, { headers }),
+        authenticatedFetch(`${apiRoot}/styles`, { headers }),
       ]);
-      if (!releaseResponse.ok || !artifactResponse.ok || !styleResponse.ok) throw new Error(t("release.errorLoad"));
+      if (!releaseResponse.ok || !artifactResponse.ok || !styleResponse.ok)
+        throw new Error(t("release.errorLoad"));
       setReleases(((await releaseResponse.json()) as { items?: Release[] }).items ?? []);
       setArtifacts(((await artifactResponse.json()) as { items?: Artifact[] }).items ?? []);
       setStyles(((await styleResponse.json()) as { items?: StyleVersion[] }).items ?? []);
@@ -180,12 +207,17 @@ export function ReleasesPage() {
     if (!accessToken) return false;
     setSaving(true);
     try {
-      const response = await fetch(path, {
+      const response = await authenticatedFetch(path, {
         ...options,
         headers: { Authorization: `Bearer ${accessToken}`, ...options.headers },
       });
       if (!response.ok) {
         const detail = (await response.text()).trim();
+        if (response.status === 409) {
+          // A stale browser can otherwise claim that no draft exists even though
+          // another tab/request has already created this map version.
+          await load();
+        }
         throw new Error(detail || message);
       }
       await load();
@@ -221,7 +253,10 @@ export function ReleasesPage() {
   };
   const importStyle = async () => {
     if (!accessToken || !styleFile || !styleName.trim() || styleImporting) return;
-    if (Boolean(spriteJSON) !== Boolean(spritePNG) || Boolean(spriteJSON2x) !== Boolean(spritePNG2x)) {
+    if (
+      Boolean(spriteJSON) !== Boolean(spritePNG) ||
+      Boolean(spriteJSON2x) !== Boolean(spritePNG2x)
+    ) {
       setError(t("release.styleSpritePairRequired"));
       return;
     }
@@ -234,8 +269,12 @@ export function ReleasesPage() {
     if (spritePNG2x) form.set("spritePng2x", spritePNG2x);
     setStyleImporting(true);
     try {
-      const response = await fetch(`${apiRoot}/styles/import`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}` }, body: form });
-      if (!response.ok) throw new Error((await response.text()).trim() || t("release.errorStyleImport"));
+      const response = await authenticatedFetch(`${apiRoot}/styles/import`, {
+        method: "POST",
+        body: form,
+      });
+      if (!response.ok)
+        throw new Error((await response.text()).trim() || t("release.errorStyleImport"));
       setStyleImportOpen(false);
       await load();
     } catch (importError) {
@@ -257,15 +296,32 @@ export function ReleasesPage() {
     if (importFileInputRef.current) importFileInputRef.current.value = "";
     setImportOpen(true);
   };
-  const importMBTiles = () => {
-    if (!accessToken || !importFile || !importName.trim() || !importDataType || !isSemVer(importVersion) || importing) return;
+  const importMBTiles = async () => {
+    if (
+      !accessToken ||
+      !importFile ||
+      !importName.trim() ||
+      !importDataType ||
+      !isSemVer(importVersion) ||
+      importing
+    )
+      return;
+    const token = await ensureAccessToken();
+    if (!token) {
+      setError(t("release.errorImport"));
+      return;
+    }
     const file = importFile;
     setImporting(true);
     setImportProgress(0);
-    const params = new URLSearchParams({ filename: file.name, name: importName.trim(), dataType: importDataType });
+    const params = new URLSearchParams({
+      filename: file.name,
+      name: importName.trim(),
+      dataType: importDataType,
+    });
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", `${apiRoot}/artifacts/import?${params.toString()}`);
-    xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.setRequestHeader("Content-Type", "application/x-sqlite3");
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) setImportProgress(Math.round((event.loaded / event.total) * 100));
@@ -292,7 +348,15 @@ export function ReleasesPage() {
   };
   const selectImportMap = (value: string) => {
     setImportMapCode(value);
-    setImportVersion(value ? nextPatch(releases.filter((release) => release.mapCode === value).map((release) => release.version)) : "1.0.0");
+    setImportVersion(
+      value
+        ? nextPatch(
+            releases
+              .filter((release) => release.mapCode === value)
+              .map((release) => release.version)
+          )
+        : "1.0.0"
+    );
   };
   const createImportedDraft = async (artifactID: string) => {
     const created = await request(
@@ -383,7 +447,12 @@ export function ReleasesPage() {
           <Button variant="outlined" startIcon={<FileUp size={16} />} onClick={startImport}>
             {t("release.importMbtiles")}
           </Button>
-          <Button variant="contained" startIcon={<Plus size={16} />} disabled={!readyArtifacts.length} onClick={startDraft}>
+          <Button
+            variant="contained"
+            startIcon={<Plus size={16} />}
+            disabled={!readyArtifacts.length}
+            onClick={startDraft}
+          >
             {t("release.create")}
           </Button>
         </Stack>
@@ -461,13 +530,31 @@ export function ReleasesPage() {
                 <TableCell align="right">
                   <Stack direction="row" spacing={0.5} sx={{ justifyContent: "flex-end" }}>
                     {release.status === "draft" && (
-                      <Button size="small" disabled={saving || !release.artifactIds.every((id) => artifacts.find((artifact) => artifact.id === id)?.cacheStatus === "ready")} onClick={() => void publish(release.id)}>
+                      <Button
+                        size="small"
+                        disabled={
+                          saving ||
+                          !release.artifactIds.every(
+                            (id) =>
+                              artifacts.find((artifact) => artifact.id === id)?.cacheStatus ===
+                              "ready"
+                          )
+                        }
+                        onClick={() => void publish(release.id)}
+                      >
                         {t("release.publish")}
                       </Button>
                     )}
                     {release.status === "published" && (
                       <>
-                        <Button size="small" startIcon={<Eye size={15} />} onClick={(event) => { event.currentTarget.blur(); setPreviewRelease(release); }}>
+                        <Button
+                          size="small"
+                          startIcon={<Eye size={15} />}
+                          onClick={(event) => {
+                            event.currentTarget.blur();
+                            setPreviewRelease(release);
+                          }}
+                        >
                           {t("release.preview")}
                         </Button>
                         <Button
@@ -494,66 +581,228 @@ export function ReleasesPage() {
         </Table>
       </Paper>
 
-      <Dialog open={importOpen} onClose={() => !importing && setImportOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog
+        open={importOpen}
+        onClose={() => !importing && setImportOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
         <DialogTitle sx={{ fontWeight: 800 }}>{t("release.importTitle")}</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2.5}>
-            <Typography variant="body2" color="text.secondary">{t("release.importDescription")}</Typography>
+            <Typography variant="body2" color="text.secondary">
+              {t("release.importDescription")}
+            </Typography>
             <FormControl fullWidth size="small">
               <InputLabel>{t("release.existingMap")}</InputLabel>
-              <Select value={importMapCode} label={t("release.existingMap")} onChange={(event) => selectImportMap(event.target.value)}>
-                <MenuItem value=""><em>{t("release.newMap")}</em></MenuItem>
-                {maps.map((map) => <MenuItem key={map.mapCode} value={map.mapCode}>{map.name} — {map.mapCode}</MenuItem>)}
+              <Select
+                value={importMapCode}
+                label={t("release.existingMap")}
+                onChange={(event) => selectImportMap(event.target.value)}
+              >
+                <MenuItem value="">
+                  <em>{t("release.newMap")}</em>
+                </MenuItem>
+                {maps.map((map) => (
+                  <MenuItem key={map.mapCode} value={map.mapCode}>
+                    {map.name} — {map.mapCode}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
-            <TextField label={t("release.importName")} value={importName} onChange={(event) => setImportName(event.target.value)} required fullWidth />
-            <TextField label={t("release.version")} value={importVersion} onChange={(event) => setImportVersion(event.target.value)} required fullWidth />
-            <TextField label={t("release.description")} value={importDescription} onChange={(event) => setImportDescription(event.target.value)} multiline minRows={2} slotProps={{ htmlInput: { maxLength: 2000 } }} />
-            <TextField select label={t("release.styleVersion")} value={importStyleVersionID} onChange={(event) => setImportStyleVersionID(event.target.value)} fullWidth>
+            <TextField
+              label={t("release.importName")}
+              value={importName}
+              onChange={(event) => setImportName(event.target.value)}
+              required
+              fullWidth
+            />
+            <TextField
+              label={t("release.version")}
+              value={importVersion}
+              onChange={(event) => setImportVersion(event.target.value)}
+              required
+              fullWidth
+            />
+            <TextField
+              label={t("release.description")}
+              value={importDescription}
+              onChange={(event) => setImportDescription(event.target.value)}
+              multiline
+              minRows={2}
+              slotProps={{ htmlInput: { maxLength: 2000 } }}
+            />
+            <TextField
+              select
+              label={t("release.styleVersion")}
+              value={importStyleVersionID}
+              onChange={(event) => setImportStyleVersionID(event.target.value)}
+              fullWidth
+            >
               <MenuItem value="">{t("release.styleAutomatic")}</MenuItem>
-              {styles.map((style) => <MenuItem key={style.id} value={style.id}>{style.name}</MenuItem>)}
+              {styles.map((style) => (
+                <MenuItem key={style.id} value={style.id}>
+                  {style.name}
+                </MenuItem>
+              ))}
             </TextField>
-            <TextField select label={t("release.importDataType")} value={importDataType} onChange={(event) => setImportDataType(event.target.value)} required fullWidth>
-              <MenuItem value="" disabled>{t("release.importDataTypePlaceholder")}</MenuItem>
-              {importDataTypes.map((dataType) => <MenuItem key={dataType} value={dataType}>{t(`datasets.type.${dataType}`)}</MenuItem>)}
+            <TextField
+              select
+              label={t("release.importDataType")}
+              value={importDataType}
+              onChange={(event) => setImportDataType(event.target.value)}
+              required
+              fullWidth
+            >
+              <MenuItem value="" disabled>
+                {t("release.importDataTypePlaceholder")}
+              </MenuItem>
+              {importDataTypes.map((dataType) => (
+                <MenuItem key={dataType} value={dataType}>
+                  {t(`datasets.type.${dataType}`)}
+                </MenuItem>
+              ))}
             </TextField>
-            <Paper component="button" type="button" variant="outlined" onClick={() => importFileInputRef.current?.click()} sx={{ width: "100%", p: 3, borderStyle: "dashed", bgcolor: "background.default", color: "text.primary", cursor: "pointer", "&:hover": { borderColor: "primary.main", bgcolor: "action.hover" } }}>
+            <Paper
+              component="button"
+              type="button"
+              variant="outlined"
+              onClick={() => importFileInputRef.current?.click()}
+              sx={{
+                width: "100%",
+                p: 3,
+                borderStyle: "dashed",
+                bgcolor: "background.default",
+                color: "text.primary",
+                cursor: "pointer",
+                "&:hover": { borderColor: "primary.main", bgcolor: "action.hover" },
+              }}
+            >
               <FileUp size={34} color="#d32f2f" />
-              <Typography component="span" sx={{ display: "block", mt: 1, fontWeight: 700 }}>{importFile?.name ?? t("release.importChooseFile")}</Typography>
-              <Typography component="span" variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>{t("release.importFileHint")}</Typography>
+              <Typography component="span" sx={{ display: "block", mt: 1, fontWeight: 700 }}>
+                {importFile?.name ?? t("release.importChooseFile")}
+              </Typography>
+              <Typography
+                component="span"
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: "block", mt: 0.5 }}
+              >
+                {t("release.importFileHint")}
+              </Typography>
             </Paper>
-            <input ref={importFileInputRef} type="file" accept=".mbtiles,application/x-sqlite3" hidden onChange={(event) => {
-              const file = event.target.files?.[0] ?? null;
-              setImportFile(file);
-              if (file && !importName.trim()) setImportName(file.name.replace(/\.mbtiles$/i, ""));
-            }} />
-            {importing && <Box><LinearProgress variant="determinate" value={importProgress} /><Typography variant="caption" color="text.secondary">{t("release.importing", { progress: importProgress })}</Typography></Box>}
+            <input
+              ref={importFileInputRef}
+              type="file"
+              accept=".mbtiles,application/x-sqlite3"
+              hidden
+              onChange={(event) => {
+                const file = event.target.files?.[0] ?? null;
+                setImportFile(file);
+                if (file && !importName.trim()) setImportName(file.name.replace(/\.mbtiles$/i, ""));
+              }}
+            />
+            {importing && (
+              <Box>
+                <LinearProgress variant="determinate" value={importProgress} />
+                <Typography variant="caption" color="text.secondary">
+                  {t("release.importing", { progress: importProgress })}
+                </Typography>
+              </Box>
+            )}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, py: 2 }}>
-          <Button onClick={() => setImportOpen(false)} disabled={importing}>{t("release.cancel")}</Button>
-          <Button variant="contained" startIcon={<FileUp size={16} />} onClick={importMBTiles} disabled={!accessToken || !importFile || !importName.trim() || !importDataType || !isSemVer(importVersion) || importing}>{t("release.importAndCreate")}</Button>
+          <Button onClick={() => setImportOpen(false)} disabled={importing}>
+            {t("release.cancel")}
+          </Button>
+          <Button
+            variant="contained"
+            startIcon={<FileUp size={16} />}
+            onClick={importMBTiles}
+            disabled={
+              !accessToken ||
+              !importFile ||
+              !importName.trim() ||
+              !importDataType ||
+              !isSemVer(importVersion) ||
+              importing
+            }
+          >
+            {t("release.importAndCreate")}
+          </Button>
         </DialogActions>
       </Dialog>
 
-      <Dialog open={styleImportOpen} onClose={() => !styleImporting && setStyleImportOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog
+        open={styleImportOpen}
+        onClose={() => !styleImporting && setStyleImportOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
         <DialogTitle sx={{ fontWeight: 800 }}>{t("release.importStyleTitle")}</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2}>
-            <Typography variant="body2" color="text.secondary">{t("release.importStyleDescription")}</Typography>
-            <TextField label={t("release.styleName")} value={styleName} onChange={(event) => setStyleName(event.target.value)} required fullWidth />
-            <StyleFilePicker label="style.json" emptyLabel={t("release.chooseFile")} file={styleFile} accept=".json,application/json" onChange={setStyleFile} />
+            <Typography variant="body2" color="text.secondary">
+              {t("release.importStyleDescription")}
+            </Typography>
+            <TextField
+              label={t("release.styleName")}
+              value={styleName}
+              onChange={(event) => setStyleName(event.target.value)}
+              required
+              fullWidth
+            />
+            <StyleFilePicker
+              label="style.json"
+              emptyLabel={t("release.chooseFile")}
+              file={styleFile}
+              accept=".json,application/json"
+              onChange={setStyleFile}
+            />
             <Typography variant="subtitle2">{t("release.spriteFiles")}</Typography>
-            <StyleFilePicker label="sprite.json" emptyLabel={t("release.chooseFile")} file={spriteJSON} accept=".json,application/json" onChange={setSpriteJSON} />
-            <StyleFilePicker label="sprite.png" emptyLabel={t("release.chooseFile")} file={spritePNG} accept=".png,image/png" onChange={setSpritePNG} />
-            <StyleFilePicker label="sprite@2x.json" emptyLabel={t("release.chooseFile")} file={spriteJSON2x} accept=".json,application/json" onChange={setSpriteJSON2x} />
-            <StyleFilePicker label="sprite@2x.png" emptyLabel={t("release.chooseFile")} file={spritePNG2x} accept=".png,image/png" onChange={setSpritePNG2x} />
+            <StyleFilePicker
+              label="sprite.json"
+              emptyLabel={t("release.chooseFile")}
+              file={spriteJSON}
+              accept=".json,application/json"
+              onChange={setSpriteJSON}
+            />
+            <StyleFilePicker
+              label="sprite.png"
+              emptyLabel={t("release.chooseFile")}
+              file={spritePNG}
+              accept=".png,image/png"
+              onChange={setSpritePNG}
+            />
+            <StyleFilePicker
+              label="sprite@2x.json"
+              emptyLabel={t("release.chooseFile")}
+              file={spriteJSON2x}
+              accept=".json,application/json"
+              onChange={setSpriteJSON2x}
+            />
+            <StyleFilePicker
+              label="sprite@2x.png"
+              emptyLabel={t("release.chooseFile")}
+              file={spritePNG2x}
+              accept=".png,image/png"
+              onChange={setSpritePNG2x}
+            />
             <Alert severity="info">{t("release.styleGlyphNotice")}</Alert>
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, py: 2 }}>
-          <Button onClick={() => setStyleImportOpen(false)} disabled={styleImporting}>{t("release.cancel")}</Button>
-          <Button variant="contained" onClick={() => void importStyle()} disabled={!styleFile || !styleName.trim() || styleImporting}>{t("release.importStyleStart")}</Button>
+          <Button onClick={() => setStyleImportOpen(false)} disabled={styleImporting}>
+            {t("release.cancel")}
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => void importStyle()}
+            disabled={!styleFile || !styleName.trim() || styleImporting}
+          >
+            {t("release.importStyleStart")}
+          </Button>
         </DialogActions>
       </Dialog>
 
@@ -619,9 +868,20 @@ export function ReleasesPage() {
               minRows={2}
               slotProps={{ htmlInput: { maxLength: 4000 } }}
             />
-            <TextField select label={t("release.styleVersion")} value={styleVersionID} onChange={(event) => setStyleVersionID(event.target.value)} fullWidth>
+            <TextField
+              select
+              label={t("release.styleVersion")}
+              value={styleVersionID}
+              onChange={(event) => setStyleVersionID(event.target.value)}
+              fullWidth
+            >
               <MenuItem value="">{t("release.styleAutomatic")}</MenuItem>
-              {styles.map((style) => <MenuItem key={style.id} value={style.id}>{style.name}{style.hasSprite ? ` · ${t("release.withSprite")}` : ""}</MenuItem>)}
+              {styles.map((style) => (
+                <MenuItem key={style.id} value={style.id}>
+                  {style.name}
+                  {style.hasSprite ? ` · ${t("release.withSprite")}` : ""}
+                </MenuItem>
+              ))}
             </TextField>
             <FormControl fullWidth size="small">
               <InputLabel>{t("release.artifacts")}</InputLabel>
@@ -669,7 +929,11 @@ export function ReleasesPage() {
         </DialogActions>
       </Dialog>
 
-      <ReleasePreviewDialog release={previewRelease} accessToken={accessToken} onClose={() => setPreviewRelease(null)} />
+      <ReleasePreviewDialog
+        release={previewRelease}
+        accessToken={accessToken}
+        onClose={() => setPreviewRelease(null)}
+      />
 
       <Dialog
         open={Boolean(deleteTarget)}

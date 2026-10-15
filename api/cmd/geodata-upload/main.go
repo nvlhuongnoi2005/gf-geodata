@@ -556,22 +556,16 @@ func (s *server) createRelease(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid style version", http.StatusBadRequest)
 		return
 	}
-	mapCode := strings.TrimSpace(request.MapCode)
+	requestedMapCode := strings.TrimSpace(request.MapCode)
+	isNewMap := requestedMapCode == ""
 	ctx, c := context.WithTimeout(r.Context(), 10*time.Second)
 	defer c()
-	if mapCode == "" {
-		var err error
-		mapCode, err = newMapCode()
-		if err != nil {
-			http.Error(w, "could not generate map code", http.StatusInternalServerError)
-			return
-		}
-	} else {
-		if !validMapCode(mapCode) {
+	if !isNewMap {
+		if !validMapCode(requestedMapCode) {
 			http.Error(w, "invalid map code", http.StatusBadRequest)
 			return
 		}
-		exists, err := s.store.MapCodeExists(ctx, mapCode)
+		exists, err := s.store.MapCodeExists(ctx, requestedMapCode)
 		if err != nil {
 			http.Error(w, "could not verify map version", http.StatusServiceUnavailable)
 			return
@@ -581,39 +575,75 @@ func (s *server) createRelease(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	slug := releaseSlug(mapCode, request.Version)
-	if !validSlug(slug) {
-		http.Error(w, "generated release identifier is invalid", http.StatusBadRequest)
-		return
-	}
-	id, err := newUUID()
-	if err != nil {
-		http.Error(w, "could not create release", 500)
-		return
-	}
 	actor, _ := r.Context().Value(actorContextKey{}).(string)
 	// Access policy is selected later in Access control. A newly drafted map is
 	// restricted until an administrator makes it public or grants recipients.
-	release := catalog.MapRelease{ID: id, Name: strings.TrimSpace(request.Name), MapCode: mapCode, Version: request.Version, Slug: slug, Description: strings.TrimSpace(request.Description), ReleaseNotes: strings.TrimSpace(request.ReleaseNotes), Visibility: "restricted", Status: "draft", StyleVersionID: request.StyleVersionID, CreatedBy: actor, CreatedAt: time.Now().UTC()}
-	if err = s.store.CreateRelease(ctx, release, request.ArtifactIDs); err != nil {
-		if errors.Is(err, catalog.ErrReleaseVersionExists) {
-			http.Error(w, "a release with this map code and version already exists", http.StatusConflict)
+
+	// A blank map code always means a new map. The identifier is generated on
+	// the server, not derived from its display name, and a rare database
+	// collision is retried transparently. A supplied map code, in contrast,
+	// represents a new version of an existing map and must remain unique.
+	var release catalog.MapRelease
+	var createErr error
+	for attempt := 1; attempt <= 5; attempt++ {
+		mapCode := requestedMapCode
+		if isNewMap {
+			mapCode, createErr = newMapCode()
+			if createErr != nil {
+				http.Error(w, "could not generate map code", http.StatusInternalServerError)
+				return
+			}
+		}
+		slug := releaseSlug(mapCode, request.Version)
+		if !validSlug(slug) {
+			http.Error(w, "generated release identifier is invalid", http.StatusBadRequest)
 			return
 		}
-		if errors.Is(err, catalog.ErrReleaseArtifactAssigned) {
+		id, err := newUUID()
+		if err != nil {
+			http.Error(w, "could not create release", http.StatusInternalServerError)
+			return
+		}
+		release = catalog.MapRelease{ID: id, Name: strings.TrimSpace(request.Name), MapCode: mapCode, Version: request.Version, Slug: slug, Description: strings.TrimSpace(request.Description), ReleaseNotes: strings.TrimSpace(request.ReleaseNotes), Visibility: "restricted", Status: "draft", StyleVersionID: request.StyleVersionID, CreatedBy: actor, CreatedAt: time.Now().UTC()}
+		slog.Info("create map release", "new_map", isNewMap, "map_code", mapCode, "version", request.Version, "artifact_count", len(request.ArtifactIDs))
+		createErr = s.store.CreateRelease(ctx, release, request.ArtifactIDs)
+		if createErr == nil {
+			break
+		}
+		if isNewMap && (errors.Is(createErr, catalog.ErrReleaseVersionExists) || errors.Is(createErr, catalog.ErrReleaseSlugExists)) {
+			slog.Warn("generated map release identifier collision; retrying", "attempt", attempt, "map_code", mapCode, "version", request.Version)
+			continue
+		}
+		break
+	}
+	if createErr != nil {
+		if isNewMap && (errors.Is(createErr, catalog.ErrReleaseVersionExists) || errors.Is(createErr, catalog.ErrReleaseSlugExists)) {
+			slog.Error("could not allocate generated map release identifier", "version", request.Version, "error", createErr)
+			http.Error(w, "could not allocate an identifier for the new map; try again", http.StatusServiceUnavailable)
+			return
+		}
+		if errors.Is(createErr, catalog.ErrReleaseVersionExists) {
+			http.Error(w, "a draft, published, or archived release already uses this map code and version", http.StatusConflict)
+			return
+		}
+		if errors.Is(createErr, catalog.ErrReleaseSlugExists) {
+			http.Error(w, "the generated release URL identifier is already in use; try again", http.StatusConflict)
+			return
+		}
+		if errors.Is(createErr, catalog.ErrReleaseArtifactAssigned) {
 			// This can occur only until migration 013 has been applied. Keeping
 			// the message accurate makes a partial rollout diagnosable without
 			// claiming that the requested semantic version is duplicated.
 			http.Error(w, "the selected MBTiles output is temporarily reserved by the legacy serving configuration; apply the latest catalog migration", http.StatusConflict)
 			return
 		}
-		if errors.Is(err, catalog.ErrConversionJobNotActive) {
+		if errors.Is(createErr, catalog.ErrConversionJobNotActive) {
 			http.Error(w, "the selected MBTiles output is not ready in GeoData tile storage", http.StatusConflict)
 			return
 		}
 		// Keep database implementation details out of the browser, but retain
 		// the complete error in the server log for an operator to diagnose.
-		slog.Error("create map release", "map_code", mapCode, "version", request.Version, "artifact_count", len(request.ArtifactIDs), "error", err)
+		slog.Error("create map release", "map_code", release.MapCode, "version", request.Version, "artifact_count", len(request.ArtifactIDs), "error", createErr)
 		http.Error(w, "could not save the draft release", http.StatusServiceUnavailable)
 		return
 	}
@@ -871,7 +901,7 @@ func validSlug(value string) bool {
 func validMapCode(value string) bool {
 	// Legacy releases use their former slug as mapCode. Keep those maps
 	// versionable even when an old identifier is shorter than new generated
-	// codes such as map-a1b2c3d4e5f6.
+	// codes such as map-a1b2c3d4e5f67890.
 	return validSlug(value) && len(value) <= 100
 }
 
@@ -896,7 +926,10 @@ func newMapCode() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "map-" + strings.ReplaceAll(id, "-", "")[:12], nil
+	// Keep the full random UUID payload. Earlier versions used only its first
+	// 48 bits, which was unlikely to collide but needlessly made a brand-new
+	// map depend on the same uniqueness path as an existing map version.
+	return "map-" + strings.ReplaceAll(id, "-", ""), nil
 }
 
 func releaseSlug(mapCode, version string) string {

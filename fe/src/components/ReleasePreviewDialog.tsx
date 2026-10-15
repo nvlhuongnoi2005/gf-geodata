@@ -1,7 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Box, CircularProgress, Dialog, DialogContent, DialogTitle, IconButton, Stack, Typography } from "@mui/material";
+import {
+  Alert,
+  Box,
+  CircularProgress,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  IconButton,
+  Stack,
+  Typography,
+} from "@mui/material";
 import { X } from "lucide-react";
 import { Map, NavigationControl, type StyleSpecification } from "maplibre-gl";
+import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 
 type TileJSON = {
@@ -38,9 +49,27 @@ function styleForRelease(tileJSONs: TileJSON[]): StyleSpecification {
     }
     for (const vectorLayer of tileJSON.vector_layers ?? []) {
       layers.push(
-        { id: `${sourceID}-${vectorLayer.id}-fill`, type: "fill", source: sourceID, "source-layer": vectorLayer.id, paint: { "fill-color": "#3b82f6", "fill-opacity": 0.28 } },
-        { id: `${sourceID}-${vectorLayer.id}-line`, type: "line", source: sourceID, "source-layer": vectorLayer.id, paint: { "line-color": "#1d4ed8", "line-width": 1.2 } },
-        { id: `${sourceID}-${vectorLayer.id}-circle`, type: "circle", source: sourceID, "source-layer": vectorLayer.id, paint: { "circle-color": "#dc2626", "circle-radius": 3 } },
+        {
+          id: `${sourceID}-${vectorLayer.id}-fill`,
+          type: "fill",
+          source: sourceID,
+          "source-layer": vectorLayer.id,
+          paint: { "fill-color": "#3b82f6", "fill-opacity": 0.28 },
+        },
+        {
+          id: `${sourceID}-${vectorLayer.id}-line`,
+          type: "line",
+          source: sourceID,
+          "source-layer": vectorLayer.id,
+          paint: { "line-color": "#1d4ed8", "line-width": 1.2 },
+        },
+        {
+          id: `${sourceID}-${vectorLayer.id}-circle`,
+          type: "circle",
+          source: sourceID,
+          "source-layer": vectorLayer.id,
+          paint: { "circle-color": "#dc2626", "circle-radius": 3 },
+        }
       );
     }
   }
@@ -48,18 +77,32 @@ function styleForRelease(tileJSONs: TileJSON[]): StyleSpecification {
 }
 
 function previewBounds(tileJSONs: TileJSON[]): [number, number, number, number] {
-  const bounds = tileJSONs.map((item) => item.bounds).filter((item): item is [number, number, number, number] =>
-    Boolean(item) && item!.every(Number.isFinite) && item![0] < item![2] && item![1] < item![3]
-  );
+  const bounds = tileJSONs
+    .map((item) => item.bounds)
+    .filter(
+      (item): item is [number, number, number, number] =>
+        Boolean(item) && item!.every(Number.isFinite) && item![0] < item![2] && item![1] < item![3]
+    );
   if (!bounds.length) return [-180, -85.051129, 180, 85.051129];
   return [
-    Math.min(...bounds.map((item) => item[0])), Math.min(...bounds.map((item) => item[1])),
-    Math.max(...bounds.map((item) => item[2])), Math.max(...bounds.map((item) => item[3])),
+    Math.min(...bounds.map((item) => item[0])),
+    Math.min(...bounds.map((item) => item[1])),
+    Math.max(...bounds.map((item) => item[2])),
+    Math.max(...bounds.map((item) => item[3])),
   ];
 }
 
-export function ReleasePreviewDialog({ release, accessToken, onClose }: { release: PreviewRelease | null; accessToken: string | null; onClose: () => void }) {
+export function ReleasePreviewDialog({
+  release,
+  accessToken,
+  onClose,
+}: {
+  release: PreviewRelease | null;
+  accessToken: string | null;
+  onClose: () => void;
+}) {
   const { t } = useI18n();
+  const { authenticatedFetch } = useAuth();
   const [mapNode, setMapNode] = useState<HTMLDivElement | null>(null);
   const map = useRef<Map | null>(null);
   const [error, setError] = useState(false);
@@ -73,42 +116,95 @@ export function ReleasePreviewDialog({ release, accessToken, onClose }: { releas
     void (async () => {
       try {
         if (!release.artifactIds.length) throw new Error("release has no artifacts");
-        const tileJSONs = await Promise.all(release.artifactIds.map(async (artifactID) => {
-          const url = `/tiles/v1/releases/${release.slug}/tilejson/${artifactID}`;
-          const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-          if (!response.ok) throw new Error("preview unavailable");
-          return { ...(await response.json() as TileJSON), url };
-        }));
+        const tileJSONs = await Promise.all(
+          release.artifactIds.map(async (artifactID) => {
+            const url = `/tiles/v1/releases/${release.slug}/tilejson/${artifactID}`;
+            const response = await authenticatedFetch(url);
+            if (!response.ok) throw new Error("preview unavailable");
+            return { ...((await response.json()) as TileJSON), url };
+          })
+        );
         let releaseStyle: StyleSpecification | undefined;
         if (release.styleVersionId) {
-          const response = await fetch(`/tiles/v1/releases/${release.slug}/style.json`, { headers: { Authorization: `Bearer ${accessToken}` } });
+          const response = await authenticatedFetch(
+            `/tiles/v1/releases/${release.slug}/style.json`
+          );
           if (!response.ok) throw new Error("release style unavailable");
-          releaseStyle = await response.json() as StyleSpecification;
+          releaseStyle = (await response.json()) as StyleSpecification;
         }
         if (disposed) return;
         const instance = new Map({
           container: mapNode,
           style: releaseStyle ?? styleForRelease(tileJSONs),
           bounds: previewBounds(tileJSONs),
-          fitBoundsOptions: { padding: 44, maxZoom: Math.min(...tileJSONs.map((item) => item.maxzoom), 14) },
-          transformRequest: (url) => url.startsWith("/tiles/") ? { url, headers: { Authorization: `Bearer ${accessToken}` } } : { url },
+          fitBoundsOptions: {
+            padding: 44,
+            maxZoom: Math.min(...tileJSONs.map((item) => item.maxzoom), 14),
+          },
+          transformRequest: (url) =>
+            url.startsWith("/tiles/")
+              ? { url, headers: { Authorization: `Bearer ${accessToken}` } }
+              : { url },
         });
         instance.addControl(new NavigationControl(), "top-right");
-        instance.once("style.load", () => { if (!disposed) setReady(true); });
+        instance.once("style.load", () => {
+          if (!disposed) setReady(true);
+        });
         map.current = instance;
       } catch {
         if (!disposed) setError(true);
       }
     })();
-    return () => { disposed = true; map.current?.remove(); map.current = null; };
-  }, [release, accessToken, mapNode]);
+    return () => {
+      disposed = true;
+      map.current?.remove();
+      map.current = null;
+    };
+  }, [release, accessToken, authenticatedFetch, mapNode]);
 
-  return <Dialog open={Boolean(release)} onClose={onClose} maxWidth="xl" fullWidth slotProps={{ paper: { sx: { height: "min(82vh, 760px)" } } }}>
-    <DialogTitle sx={{ fontWeight: 750, pr: 7 }}>{release ? `${release.name} · v${release.version}` : t("preview.title")}<IconButton onClick={onClose} sx={{ position: "absolute", right: 12, top: 10 }} aria-label={t("common.close")}><X size={18} /></IconButton></DialogTitle>
-    <DialogContent dividers sx={{ p: 0, position: "relative" }}>
-      <Box ref={setMapNode} sx={{ position: "absolute", inset: 0 }} />
-      {!ready && !error && <Stack sx={{ position: "absolute", inset: 0, alignItems: "center", justifyContent: "center", bgcolor: "background.paper" }} spacing={1}><CircularProgress size={28} /><Typography variant="body2" color="text.secondary">{t("preview.loading")}</Typography></Stack>}
-      {error && <Alert severity="error" sx={{ m: 2 }}>{t("preview.failed")}</Alert>}
-    </DialogContent>
-  </Dialog>;
+  return (
+    <Dialog
+      open={Boolean(release)}
+      onClose={onClose}
+      maxWidth="xl"
+      fullWidth
+      slotProps={{ paper: { sx: { height: "min(82vh, 760px)" } } }}
+    >
+      <DialogTitle sx={{ fontWeight: 750, pr: 7 }}>
+        {release ? `${release.name} · v${release.version}` : t("preview.title")}
+        <IconButton
+          onClick={onClose}
+          sx={{ position: "absolute", right: 12, top: 10 }}
+          aria-label={t("common.close")}
+        >
+          <X size={18} />
+        </IconButton>
+      </DialogTitle>
+      <DialogContent dividers sx={{ p: 0, position: "relative" }}>
+        <Box ref={setMapNode} sx={{ position: "absolute", inset: 0 }} />
+        {!ready && !error && (
+          <Stack
+            sx={{
+              position: "absolute",
+              inset: 0,
+              alignItems: "center",
+              justifyContent: "center",
+              bgcolor: "background.paper",
+            }}
+            spacing={1}
+          >
+            <CircularProgress size={28} />
+            <Typography variant="body2" color="text.secondary">
+              {t("preview.loading")}
+            </Typography>
+          </Stack>
+        )}
+        {error && (
+          <Alert severity="error" sx={{ m: 2 }}>
+            {t("preview.failed")}
+          </Alert>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
 }

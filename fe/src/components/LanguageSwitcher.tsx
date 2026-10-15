@@ -42,7 +42,16 @@ export function LanguageSwitcher() {
             style={{ width: "100%", height: "100%", display: "block" }}
           />
         </Box>
-        <Typography component="span" sx={{ color: "inherit", fontSize: 13, fontWeight: 800, lineHeight: 1, textTransform: "uppercase" }}>
+        <Typography
+          component="span"
+          sx={{
+            color: "inherit",
+            fontSize: 13,
+            fontWeight: 800,
+            lineHeight: 1,
+            textTransform: "uppercase",
+          }}
+        >
           {isVietnamese ? "vn" : "en"}
         </Typography>
       </ButtonBase>

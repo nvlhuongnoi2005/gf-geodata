@@ -9,7 +9,10 @@ type Summary = {
   datasets: number;
   jobs: { queued: number; running: number; failed: number };
   releases: number;
-  services: Array<{ name: "authentication" | "storage" | "catalog" | "tiles"; state: ServiceState }>;
+  services: Array<{
+    name: "authentication" | "storage" | "catalog" | "tiles";
+    state: ServiceState;
+  }>;
 };
 
 const serviceLabels: Record<ServiceState, string> = {
@@ -18,13 +21,16 @@ const serviceLabels: Record<ServiceState, string> = {
   unavailable: "Chưa kết nối",
 };
 
-function getServiceState(summary: Summary | null, name: Summary["services"][number]["name"]): ServiceState {
+function getServiceState(
+  summary: Summary | null,
+  name: Summary["services"][number]["name"]
+): ServiceState {
   return summary?.services.find((service) => service.name === name)?.state ?? "unavailable";
 }
 
 export function DashboardPage() {
   const { t } = useI18n();
-  const { accessToken } = useAuth();
+  const { accessToken, authenticatedFetch } = useAuth();
   const [summary, setSummary] = useState<Summary | null>(null);
 
   useEffect(() => {
@@ -35,9 +41,7 @@ export function DashboardPage() {
     let disposed = false;
     const loadSummary = async () => {
       try {
-        const response = await fetch("/api/geodata/v1/summary", {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
+        const response = await authenticatedFetch("/api/geodata/v1/summary");
         if (!response.ok) throw new Error("Could not load system summary");
         const data = (await response.json()) as Summary;
         if (!disposed) setSummary(data);
@@ -51,7 +55,7 @@ export function DashboardPage() {
       disposed = true;
       window.clearInterval(refreshTimer);
     };
-  }, [accessToken]);
+  }, [accessToken, authenticatedFetch]);
 
   const authState = getServiceState(summary, "authentication");
   const storageState = getServiceState(summary, "storage");
@@ -242,7 +246,11 @@ function HealthRow({ label, state }: { label: string; state: ServiceState }) {
   const colors: Record<ServiceState, { dot: string; text: string; ring: string }> = {
     ready: { dot: "success.main", text: "success.main", ring: "rgba(34, 197, 94, 0.15)" },
     degraded: { dot: "warning.main", text: "warning.main", ring: "rgba(217, 119, 6, 0.15)" },
-    unavailable: { dot: "text.disabled", text: "text.secondary", ring: "rgba(100, 116, 139, 0.15)" },
+    unavailable: {
+      dot: "text.disabled",
+      text: "text.secondary",
+      ring: "rgba(100, 116, 139, 0.15)",
+    },
   };
   const color = colors[state];
 

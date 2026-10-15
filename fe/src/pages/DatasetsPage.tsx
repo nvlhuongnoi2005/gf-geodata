@@ -29,7 +29,15 @@ import { useI18n, type TranslationKey } from "../i18n";
 import { useAuth } from "../auth";
 
 const acceptedFileTypes = ".osm.pbf,.tif,.tiff,.gpkg,.zip,.mbtiles";
-const dataTypes = ["street", "satellite", "administrative", "topographic", "land_use", "hydrology", "other"] as const;
+const dataTypes = [
+  "street",
+  "satellite",
+  "administrative",
+  "topographic",
+  "land_use",
+  "hydrology",
+  "other",
+] as const;
 type DataType = (typeof dataTypes)[number];
 const dataTypeLabels: Record<DataType, TranslationKey> = {
   street: "datasets.type.street",
@@ -92,7 +100,7 @@ function suggestedName(fileName: string): string {
 
 export function DatasetsPage() {
   const { t } = useI18n();
-  const { accessToken } = useAuth();
+  const { accessToken, authenticatedFetch, ensureAccessToken } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadPanelOpen, setUploadPanelOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -116,7 +124,7 @@ export function DatasetsPage() {
     setLoading(true);
     setLoadError(false);
     try {
-      const response = await fetch("/api/geodata/v1/uploads?limit=100", {
+      const response = await authenticatedFetch("/api/geodata/v1/uploads?limit=100", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       if (!response.ok) throw new Error("Could not load source data");
@@ -144,8 +152,13 @@ export function DatasetsPage() {
     setUploadPanelOpen(true);
   };
 
-  const startUpload = () => {
+  const startUpload = async () => {
     if (!selectedFile || !dataName.trim() || !dataType || !accessToken || uploading) return;
+    const token = await ensureAccessToken();
+    if (!token) {
+      setUploadMessage("error");
+      return;
+    }
     const file = selectedFile;
     setUploading(true);
     setUploadProgress(0);
@@ -153,7 +166,7 @@ export function DatasetsPage() {
     const params = new URLSearchParams({ filename: file.name, name: dataName.trim(), dataType });
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", `/api/geodata/v1/uploads?${params.toString()}`);
-    xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) setUploadProgress(Math.round((event.loaded / event.total) * 100));
@@ -184,10 +197,13 @@ export function DatasetsPage() {
     setDeleting(true);
     setDeleteFailed(false);
     try {
-      const response = await fetch(`/api/geodata/v1/uploads/${encodeURIComponent(deleteTarget.id)}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      const response = await authenticatedFetch(
+        `/api/geodata/v1/uploads/${encodeURIComponent(deleteTarget.id)}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }
+      );
       if (!response.ok) throw new Error("Could not delete raw data");
       setItems((current) => current.filter((item) => item.id !== deleteTarget.id));
       setDeleteTarget(null);
@@ -198,16 +214,28 @@ export function DatasetsPage() {
     }
   };
 
-  const dataTypeLabel = (value: string) => t(dataTypeLabels[value as DataType] ?? "datasets.type.other");
+  const dataTypeLabel = (value: string) =>
+    t(dataTypeLabels[value as DataType] ?? "datasets.type.other");
 
   return (
     <Stack spacing={3}>
-      <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ justifyContent: "space-between", alignItems: { sm: "flex-end" } }}>
+      <Stack
+        direction={{ xs: "column", sm: "row" }}
+        spacing={2}
+        sx={{ justifyContent: "space-between", alignItems: { sm: "flex-end" } }}
+      >
         <Box>
-          <Typography variant="h4" sx={{ fontSize: { xs: 24, sm: 27 }, fontWeight: 700, letterSpacing: "-0.02em" }}>
+          <Typography
+            variant="h4"
+            sx={{ fontSize: { xs: 24, sm: 27 }, fontWeight: 700, letterSpacing: "-0.02em" }}
+          >
             {t("datasets.title")}
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontSize: "0.9375rem" }}>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ mt: 0.5, fontSize: "0.9375rem" }}
+          >
             {t("datasets.description")}
           </Typography>
         </Box>
@@ -216,102 +244,272 @@ export function DatasetsPage() {
         </Button>
       </Stack>
 
-      <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", flexWrap: "wrap", rowGap: 1 }}>
-        <Chip icon={<ShieldCheck size={14} color="#0d9488" />} label={t("datasets.immutable")} size="small" variant="outlined" sx={{ fontWeight: 650, borderColor: "divider" }} />
-        <Chip icon={<FileUp size={14} color="#0d9488" />} label={t("datasets.audited")} size="small" variant="outlined" sx={{ fontWeight: 650, borderColor: "divider" }} />
+      <Stack
+        direction="row"
+        spacing={1.5}
+        sx={{ alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
+      >
+        <Chip
+          icon={<ShieldCheck size={14} color="#0d9488" />}
+          label={t("datasets.immutable")}
+          size="small"
+          variant="outlined"
+          sx={{ fontWeight: 650, borderColor: "divider" }}
+        />
+        <Chip
+          icon={<FileUp size={14} color="#0d9488" />}
+          label={t("datasets.audited")}
+          size="small"
+          variant="outlined"
+          sx={{ fontWeight: 650, borderColor: "divider" }}
+        />
       </Stack>
 
       {loading ? (
         <Paper variant="outlined" sx={{ py: 7, display: "grid", placeItems: "center" }}>
           <CircularProgress size={28} />
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>{t("datasets.loading")}</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+            {t("datasets.loading")}
+          </Typography>
         </Paper>
       ) : loadError ? (
-        <Alert severity="error" action={<Button color="inherit" size="small" onClick={() => void loadUploads()}>{t("datasets.retry")}</Button>}>
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" onClick={() => void loadUploads()}>
+              {t("datasets.retry")}
+            </Button>
+          }
+        >
           {t("datasets.loadFailed")}
         </Alert>
       ) : items.length === 0 ? (
-        <Paper variant="outlined" sx={{ py: 7, px: 3, textAlign: "center", display: "grid", placeItems: "center" }}>
+        <Paper
+          variant="outlined"
+          sx={{ py: 7, px: 3, textAlign: "center", display: "grid", placeItems: "center" }}
+        >
           <Box sx={{ maxWidth: 460 }}>
-            <Box sx={{ width: 56, height: 56, borderRadius: 3, bgcolor: "action.hover", color: "text.secondary", display: "grid", placeItems: "center", mx: "auto", mb: 2 }}><Database size={28} /></Box>
-            <Typography variant="h6" sx={{ fontSize: "1.15rem", fontWeight: 700 }}>{t("datasets.empty")}</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75, mb: 2.5, lineHeight: 1.6 }}>{t("datasets.emptyDescription")}</Typography>
-            <Button variant="contained" startIcon={<UploadCloud size={16} />} onClick={openUploadPanel}>{t("datasets.new")}</Button>
+            <Box
+              sx={{
+                width: 56,
+                height: 56,
+                borderRadius: 3,
+                bgcolor: "action.hover",
+                color: "text.secondary",
+                display: "grid",
+                placeItems: "center",
+                mx: "auto",
+                mb: 2,
+              }}
+            >
+              <Database size={28} />
+            </Box>
+            <Typography variant="h6" sx={{ fontSize: "1.15rem", fontWeight: 700 }}>
+              {t("datasets.empty")}
+            </Typography>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ mt: 0.75, mb: 2.5, lineHeight: 1.6 }}
+            >
+              {t("datasets.emptyDescription")}
+            </Typography>
+            <Button
+              variant="contained"
+              startIcon={<UploadCloud size={16} />}
+              onClick={openUploadPanel}
+            >
+              {t("datasets.new")}
+            </Button>
           </Box>
         </Paper>
       ) : (
         <Paper variant="outlined">
           <Box sx={{ px: 2.5, py: 2, borderBottom: 1, borderColor: "divider" }}>
-            <Typography variant="h6" sx={{ fontSize: "1rem", fontWeight: 750 }}>{t("datasets.listTitle")}</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>{t("datasets.listDescription")}</Typography>
+            <Typography variant="h6" sx={{ fontSize: "1rem", fontWeight: 750 }}>
+              {t("datasets.listTitle")}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+              {t("datasets.listDescription")}
+            </Typography>
           </Box>
           <TableContainer>
             <Table size="small" aria-label={t("datasets.listTitle")}>
-              <TableHead><TableRow>
-                <TableCell>{t("datasets.columnName")}</TableCell>
-                <TableCell>{t("datasets.columnType")}</TableCell>
-                <TableCell>{t("datasets.columnFormat")}</TableCell>
-                <TableCell align="right">{t("datasets.columnSize")}</TableCell>
-                <TableCell>{t("datasets.columnUploadedAt")}</TableCell>
-                <TableCell>{t("datasets.columnStatus")}</TableCell>
-              </TableRow></TableHead>
-              <TableBody>{items.map((item) => (
-                <TableRow key={item.id} hover>
-                  <TableCell><Typography sx={{ fontWeight: 650 }}>{item.name}</Typography><Typography variant="caption" color="text.secondary">{item.fileName}</Typography></TableCell>
-                  <TableCell>{dataTypeLabel(item.dataType)}</TableCell>
-                  <TableCell>{formatSourceFormat(item.format)}</TableCell>
-                  <TableCell align="right">{formatFileSize(item.byteSize)}</TableCell>
-                  <TableCell>{new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(item.createdAt))}</TableCell>
-                  <TableCell>
-                    <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
-                      <Chip size="small" color="success" variant="outlined" label={t(statusLabels[item.status] ?? "datasets.status.uploaded")} />
-                      <Tooltip title={t("datasets.delete")}>
-                        <IconButton size="small" color="error" onClick={() => { setDeleteFailed(false); setDeleteTarget(item); }} aria-label={t("datasets.delete")}>
-                          <Trash2 size={16} />
-                        </IconButton>
-                      </Tooltip>
-                    </Stack>
-                  </TableCell>
+              <TableHead>
+                <TableRow>
+                  <TableCell>{t("datasets.columnName")}</TableCell>
+                  <TableCell>{t("datasets.columnType")}</TableCell>
+                  <TableCell>{t("datasets.columnFormat")}</TableCell>
+                  <TableCell align="right">{t("datasets.columnSize")}</TableCell>
+                  <TableCell>{t("datasets.columnUploadedAt")}</TableCell>
+                  <TableCell>{t("datasets.columnStatus")}</TableCell>
                 </TableRow>
-              ))}</TableBody>
+              </TableHead>
+              <TableBody>
+                {items.map((item) => (
+                  <TableRow key={item.id} hover>
+                    <TableCell>
+                      <Typography sx={{ fontWeight: 650 }}>{item.name}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {item.fileName}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>{dataTypeLabel(item.dataType)}</TableCell>
+                    <TableCell>{formatSourceFormat(item.format)}</TableCell>
+                    <TableCell align="right">{formatFileSize(item.byteSize)}</TableCell>
+                    <TableCell>
+                      {new Intl.DateTimeFormat(undefined, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      }).format(new Date(item.createdAt))}
+                    </TableCell>
+                    <TableCell>
+                      <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
+                        <Chip
+                          size="small"
+                          color="success"
+                          variant="outlined"
+                          label={t(statusLabels[item.status] ?? "datasets.status.uploaded")}
+                        />
+                        <Tooltip title={t("datasets.delete")}>
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={() => {
+                              setDeleteFailed(false);
+                              setDeleteTarget(item);
+                            }}
+                            aria-label={t("datasets.delete")}
+                          >
+                            <Trash2 size={16} />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
             </Table>
           </TableContainer>
         </Paper>
       )}
 
-      <Dialog open={uploadPanelOpen} onClose={() => !uploading && setUploadPanelOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog
+        open={uploadPanelOpen}
+        onClose={() => !uploading && setUploadPanelOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
         <DialogTitle sx={{ fontWeight: 800 }}>{t("datasets.uploadTitle")}</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2.5}>
-            <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.6 }}>{t("datasets.uploadDescription")}</Typography>
-            <TextField label={t("datasets.dataName")} value={dataName} onChange={(event) => setDataName(event.target.value)} required fullWidth slotProps={{ htmlInput: { maxLength: 200 } }} />
-            <TextField select label={t("datasets.dataType")} value={dataType} onChange={(event) => setDataType(event.target.value)} required fullWidth>
-              <MenuItem value="" disabled>{t("datasets.dataTypePlaceholder")}</MenuItem>
-              {dataTypes.map((value) => <MenuItem key={value} value={value}>{dataTypeLabel(value)}</MenuItem>)}
+            <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.6 }}>
+              {t("datasets.uploadDescription")}
+            </Typography>
+            <TextField
+              label={t("datasets.dataName")}
+              value={dataName}
+              onChange={(event) => setDataName(event.target.value)}
+              required
+              fullWidth
+              slotProps={{ htmlInput: { maxLength: 200 } }}
+            />
+            <TextField
+              select
+              label={t("datasets.dataType")}
+              value={dataType}
+              onChange={(event) => setDataType(event.target.value)}
+              required
+              fullWidth
+            >
+              <MenuItem value="" disabled>
+                {t("datasets.dataTypePlaceholder")}
+              </MenuItem>
+              {dataTypes.map((value) => (
+                <MenuItem key={value} value={value}>
+                  {dataTypeLabel(value)}
+                </MenuItem>
+              ))}
             </TextField>
-            <Paper component="button" type="button" variant="outlined" onClick={() => fileInputRef.current?.click()} sx={{ width: "100%", p: 3, borderStyle: "dashed", bgcolor: "background.default", color: "text.primary", cursor: "pointer", "&:hover": { borderColor: "primary.main", bgcolor: "action.hover" } }}>
+            <Paper
+              component="button"
+              type="button"
+              variant="outlined"
+              onClick={() => fileInputRef.current?.click()}
+              sx={{
+                width: "100%",
+                p: 3,
+                borderStyle: "dashed",
+                bgcolor: "background.default",
+                color: "text.primary",
+                cursor: "pointer",
+                "&:hover": { borderColor: "primary.main", bgcolor: "action.hover" },
+              }}
+            >
               <UploadCloud size={36} color="#d32f2f" />
-              <Typography component="span" sx={{ display: "block", mt: 1.25, fontWeight: 700 }}>{selectedFile ? selectedFile.name : t("datasets.chooseFile")}</Typography>
-              <Typography component="span" variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>{selectedFile ? `${formatFileSize(selectedFile.size)} · ${fileTypeLabel(selectedFile, t("datasets.unknownFileType"))}` : t("datasets.supportedFormats")}</Typography>
+              <Typography component="span" sx={{ display: "block", mt: 1.25, fontWeight: 700 }}>
+                {selectedFile ? selectedFile.name : t("datasets.chooseFile")}
+              </Typography>
+              <Typography
+                component="span"
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: "block", mt: 0.5 }}
+              >
+                {selectedFile
+                  ? `${formatFileSize(selectedFile.size)} · ${fileTypeLabel(selectedFile, t("datasets.unknownFileType"))}`
+                  : t("datasets.supportedFormats")}
+              </Typography>
             </Paper>
-            <input ref={fileInputRef} type="file" accept={acceptedFileTypes} hidden onChange={(event) => {
-              const file = event.target.files?.[0] ?? null;
-              setSelectedFile(file);
-              if (file && !dataName.trim()) setDataName(suggestedName(file.name));
-            }} />
-            {uploading && <Box><LinearProgress variant="determinate" value={uploadProgress} /><Typography variant="caption" color="text.secondary">{t("datasets.uploading", { progress: uploadProgress })}</Typography></Box>}
-            {uploadMessage === "success" && <Alert severity="success">{t("datasets.uploadSucceeded")}</Alert>}
-            {uploadMessage === "error" && <Alert severity="error">{t("datasets.uploadFailed")}</Alert>}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={acceptedFileTypes}
+              hidden
+              onChange={(event) => {
+                const file = event.target.files?.[0] ?? null;
+                setSelectedFile(file);
+                if (file && !dataName.trim()) setDataName(suggestedName(file.name));
+              }}
+            />
+            {uploading && (
+              <Box>
+                <LinearProgress variant="determinate" value={uploadProgress} />
+                <Typography variant="caption" color="text.secondary">
+                  {t("datasets.uploading", { progress: uploadProgress })}
+                </Typography>
+              </Box>
+            )}
+            {uploadMessage === "success" && (
+              <Alert severity="success">{t("datasets.uploadSucceeded")}</Alert>
+            )}
+            {uploadMessage === "error" && (
+              <Alert severity="error">{t("datasets.uploadFailed")}</Alert>
+            )}
             {!accessToken && <Alert severity="warning">{t("datasets.uploadApiRequired")}</Alert>}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, py: 2 }}>
-          <Button onClick={() => setUploadPanelOpen(false)} disabled={uploading}>{t("common.close")}</Button>
-          <Button variant="contained" onClick={startUpload} disabled={!selectedFile || !dataName.trim() || !dataType || !accessToken || uploading} startIcon={<UploadCloud size={16} />}>{t("datasets.startUpload")}</Button>
+          <Button onClick={() => setUploadPanelOpen(false)} disabled={uploading}>
+            {t("common.close")}
+          </Button>
+          <Button
+            variant="contained"
+            onClick={startUpload}
+            disabled={!selectedFile || !dataName.trim() || !dataType || !accessToken || uploading}
+            startIcon={<UploadCloud size={16} />}
+          >
+            {t("datasets.startUpload")}
+          </Button>
         </DialogActions>
       </Dialog>
 
-      <Dialog open={Boolean(deleteTarget)} onClose={() => !deleting && setDeleteTarget(null)} maxWidth="xs" fullWidth>
+      <Dialog
+        open={Boolean(deleteTarget)}
+        onClose={() => !deleting && setDeleteTarget(null)}
+        maxWidth="xs"
+        fullWidth
+      >
         <DialogTitle sx={{ fontWeight: 800 }}>{t("datasets.deleteTitle")}</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2}>
@@ -323,8 +521,16 @@ export function DatasetsPage() {
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, py: 2 }}>
-          <Button onClick={() => setDeleteTarget(null)} disabled={deleting}>{t("common.close")}</Button>
-          <Button variant="contained" color="error" onClick={() => void deleteRawData()} disabled={deleting} startIcon={<Trash2 size={16} />}>
+          <Button onClick={() => setDeleteTarget(null)} disabled={deleting}>
+            {t("common.close")}
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={() => void deleteRawData()}
+            disabled={deleting}
+            startIcon={<Trash2 size={16} />}
+          >
             {t("datasets.delete")}
           </Button>
         </DialogActions>

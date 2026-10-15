@@ -608,7 +608,10 @@ export function AdminShell() {
                     {user?.name.slice(0, 1).toUpperCase()}
                   </Avatar>
                   <Box sx={{ display: { xs: "none", sm: "block" } }}>
-                    <Typography variant="body2" sx={{ fontWeight: 750, lineHeight: 1.15, color: "#fff" }}>
+                    <Typography
+                      variant="body2"
+                      sx={{ fontWeight: 750, lineHeight: 1.15, color: "#fff" }}
+                    >
                       {user?.name}
                     </Typography>
                     <Typography variant="caption" sx={{ color: "rgba(255,255,255,0.65)" }}>
@@ -685,10 +688,16 @@ export function AdminShell() {
             {activePage === "releases" && <ReleasesPage />}
             {activePage === "access" && <AccessPage />}
             {activePage === "styles" && (
-              <Paper sx={{ maxWidth: 680, mx: "auto", mt: 5, p: { xs: 3, sm: 5 }, textAlign: "center" }}>
+              <Paper
+                sx={{ maxWidth: 680, mx: "auto", mt: 5, p: { xs: 3, sm: 5 }, textAlign: "center" }}
+              >
                 <Paintbrush size={36} color="#d32f2f" />
-                <Typography variant="h5" sx={{ mt: 2, fontWeight: 750 }}>{t("styles.comingSoonTitle")}</Typography>
-                <Typography color="text.secondary" sx={{ mt: 1 }}>{t("styles.comingSoonDescription")}</Typography>
+                <Typography variant="h5" sx={{ mt: 2, fontWeight: 750 }}>
+                  {t("styles.comingSoonTitle")}
+                </Typography>
+                <Typography color="text.secondary" sx={{ mt: 1 }}>
+                  {t("styles.comingSoonDescription")}
+                </Typography>
               </Paper>
             )}
           </Box>

@@ -51,9 +51,7 @@ export function StyleStudioPage() {
   const { t } = useI18n();
   const [selectedPreset, setSelectedPreset] = useState("empty");
   const [source, setSource] = useState(() => JSON.stringify(emptyStyle, null, 2));
-  const [appliedSource, setAppliedSource] = useState(() =>
-    JSON.stringify(emptyStyle, null, 2)
-  );
+  const [appliedSource, setAppliedSource] = useState(() => JSON.stringify(emptyStyle, null, 2));
   const [error, setError] = useState<string | null>(null);
   const [currentZoom, setCurrentZoom] = useState(0);
   const [currentCenter, setCurrentCenter] = useState<[number, number]>([0, 0]);
@@ -187,11 +185,7 @@ export function StyleStudioPage() {
             variant="outlined"
             color={source === appliedSource ? "success" : "warning"}
           />
-          <Button
-            variant="contained"
-            startIcon={<Save size={17} />}
-            disabled
-          >
+          <Button variant="contained" startIcon={<Save size={17} />} disabled>
             {t("style.save")}
           </Button>
         </Stack>
@@ -238,7 +232,6 @@ export function StyleStudioPage() {
               Lớp bản đồ ({layerList.length})
             </Button>
           </Stack>
-
         </Stack>
       </Paper>
 

@@ -53,7 +53,7 @@ type Release = { id: string; name: string; status: string };
 const apiRoot = "/api/geodata/v1";
 
 export function AccessPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, authenticatedFetch } = useAuth();
   const { language, t } = useI18n();
   const [grants, setGrants] = useState<Grant[]>([]);
   const [releases, setReleases] = useState<Release[]>([]);
@@ -85,8 +85,8 @@ export function AccessPage() {
     setLoadError(null);
     try {
       const [grantResponse, releaseResponse] = await Promise.all([
-        fetch(`${apiRoot}/access/grants`, { headers }),
-        fetch(`${apiRoot}/releases`, { headers }),
+        authenticatedFetch(`${apiRoot}/access/grants`, { headers }),
+        authenticatedFetch(`${apiRoot}/releases`, { headers }),
       ]);
       if (grantResponse.status === 503) {
         setLoadError("unavailable");
@@ -118,7 +118,9 @@ export function AccessPage() {
             q: subjectQuery,
             limit: "25",
           });
-          const response = await fetch(`${apiRoot}/access/subjects?${parameters}`, { headers });
+          const response = await authenticatedFetch(`${apiRoot}/access/subjects?${parameters}`, {
+            headers,
+          });
           if (!response.ok) throw new Error("search directory");
           const payload = (await response.json()) as { items?: DirectorySubject[] };
           setSubjects(payload.items ?? []);
@@ -160,7 +162,7 @@ export function AccessPage() {
     setSaving(true);
     setSaveError(false);
     try {
-      const response = await fetch(`${apiRoot}/access/grants`, {
+      const response = await authenticatedFetch(`${apiRoot}/access/grants`, {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -185,7 +187,7 @@ export function AccessPage() {
     setSaving(true);
     setSaveError(false);
     try {
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `${apiRoot}/access/grants/${encodeURIComponent(revokeTarget.id)}/revoke`,
         { method: "POST", headers }
       );
@@ -288,7 +290,9 @@ export function AccessPage() {
                         <Building2 size={16} />
                       )}
                       <Typography sx={{ fontWeight: 700 }}>
-                        {grant.principalType === "public" ? t("access.public") : grant.subjectName || "—"}
+                        {grant.principalType === "public"
+                          ? t("access.public")
+                          : grant.subjectName || "—"}
                       </Typography>
                     </Stack>
                   </TableCell>
@@ -296,8 +300,8 @@ export function AccessPage() {
                     {grant.principalType === "public"
                       ? "—"
                       : grant.principalType === "organization"
-                      ? grant.subjectName
-                      : grant.organization || "—"}
+                        ? grant.subjectName
+                        : grant.organization || "—"}
                   </TableCell>
                   <TableCell>
                     <Chip
@@ -364,50 +368,54 @@ export function AccessPage() {
                 <MenuItem value="restricted">{t("access.recipients")}</MenuItem>
               </Select>
             </FormControl>
-            {accessMode === "public" ? <Alert severity="info">{t("access.publicHint")}</Alert> : <>
-            <FormControl fullWidth size="small">
-              <InputLabel>{t("access.type")}</InputLabel>
-              <Select
-                value={principalType}
-                label={t("access.type")}
-                onChange={(event) => {
-                  setPrincipalType(event.target.value as PrincipalType);
-                  setSelectedSubject(null);
-                  setSubjects([]);
-                }}
-              >
-                <MenuItem value="user">{t("access.user")}</MenuItem>
-                <MenuItem value="organization">{t("access.organization")}</MenuItem>
-              </Select>
-            </FormControl>
-            <Autocomplete
-              options={subjects}
-              value={selectedSubject}
-              onChange={(_, value) => setSelectedSubject(value)}
-              onInputChange={(_, value) => setSubjectQuery(value)}
-              getOptionLabel={(option) => option.name}
-              noOptionsText={t("access.noRecipients")}
-              renderOption={(props, option) => (
-                <li {...props} key={option.id}>
-                  <Stack>
-                    <Typography variant="body2">{option.name}</Typography>
-                    {option.detail && (
-                      <Typography variant="caption" color="text.secondary">
-                        {option.detail}
-                      </Typography>
-                    )}
-                  </Stack>
-                </li>
-              )}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label={t("access.recipient")}
-                  placeholder={t("access.searchRecipient")}
+            {accessMode === "public" ? (
+              <Alert severity="info">{t("access.publicHint")}</Alert>
+            ) : (
+              <>
+                <FormControl fullWidth size="small">
+                  <InputLabel>{t("access.type")}</InputLabel>
+                  <Select
+                    value={principalType}
+                    label={t("access.type")}
+                    onChange={(event) => {
+                      setPrincipalType(event.target.value as PrincipalType);
+                      setSelectedSubject(null);
+                      setSubjects([]);
+                    }}
+                  >
+                    <MenuItem value="user">{t("access.user")}</MenuItem>
+                    <MenuItem value="organization">{t("access.organization")}</MenuItem>
+                  </Select>
+                </FormControl>
+                <Autocomplete
+                  options={subjects}
+                  value={selectedSubject}
+                  onChange={(_, value) => setSelectedSubject(value)}
+                  onInputChange={(_, value) => setSubjectQuery(value)}
+                  getOptionLabel={(option) => option.name}
+                  noOptionsText={t("access.noRecipients")}
+                  renderOption={(props, option) => (
+                    <li {...props} key={option.id}>
+                      <Stack>
+                        <Typography variant="body2">{option.name}</Typography>
+                        {option.detail && (
+                          <Typography variant="caption" color="text.secondary">
+                            {option.detail}
+                          </Typography>
+                        )}
+                      </Stack>
+                    </li>
+                  )}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label={t("access.recipient")}
+                      placeholder={t("access.searchRecipient")}
+                    />
+                  )}
                 />
-              )}
-            />
-            </>}
+              </>
+            )}
             <FormControl fullWidth size="small">
               <InputLabel>{t("access.chooseRelease")}</InputLabel>
               <Select
