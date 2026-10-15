@@ -28,6 +28,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/catalog"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/mbtiles"
+	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/thumbnail"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/tiling"
 )
 
@@ -68,9 +69,9 @@ func main() {
 	app := &worker{store: store, derivedBucket: required("S3_DERIVED_BUCKET"), workspaceRoot: environmentOr("WORKSPACE_ROOT", "/work")}
 	app.objectStore = openS3(ctx)
 	app.downloader = manager.NewDownloader(app.objectStore, func(d *manager.Downloader) { d.Concurrency = 2; d.PartSize = 64 * 1024 * 1024 })
+	app.uploader = manager.NewUploader(app.objectStore, func(u *manager.Uploader) { u.Concurrency = 2; u.PartSize = 64 * 1024 * 1024 })
 	if mode == "conversion" {
 		app.rawBucket = required("S3_RAW_BUCKET")
-		app.uploader = manager.NewUploader(app.objectStore, func(u *manager.Uploader) { u.Concurrency = 2; u.PartSize = 64 * 1024 * 1024 })
 		app.converter = tiling.New(tiling.Tools{
 			Tilemaker:        environmentOr("TILEMAKER_BIN", "/usr/src/app/tilemaker"),
 			Ogr2Ogr:          environmentOr("OGR2OGR_BIN", "ogr2ogr"),
@@ -92,9 +93,16 @@ func main() {
 	slog.Info("geodata worker started", "mode", mode, "poll_interval", pollEvery.String())
 	for {
 		worked := false
-		if mode == "tileserver-cache-warmer" || mode == "mbtiles-store-warmer" {
+		if mode == "mbtiles-store-warmer" {
+			// A preview is tiny compared with a full MBTiles download. Give it
+			// priority so a busy warming queue cannot starve published-map cards.
+			worked = app.previewOne(ctx)
+			if !worked {
+				worked = app.warmOne(ctx)
+			}
+		} else if mode == "tileserver-cache-warmer" {
 			worked = app.warmOne(ctx)
-			if !worked && mode == "tileserver-cache-warmer" {
+			if !worked {
 				// Compatibility path for drafts created before artifact warming.
 				worked = app.publishOne(ctx)
 			}
@@ -136,6 +144,56 @@ func (w *worker) warmOne(parent context.Context) bool {
 	stop()
 	if err != nil {
 		slog.Error("record warmed artifact", "artifact_id", artifact.ID, "error", err)
+	}
+	return true
+}
+
+// previewOne creates one thumbnail after its immutable MBTiles payload has
+// been activated on the serving volume. The image goes to S3 so gateway
+// replicas do not need local preview state.
+func (w *worker) previewOne(parent context.Context) bool {
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	artifact, err := w.store.ClaimPreviewArtifact(ctx)
+	cancel()
+	if err != nil {
+		slog.Error("claim artifact preview", "error", err)
+		return false
+	}
+	if artifact == nil {
+		return false
+	}
+	path, err := mbtiles.ArtifactPath(w.tileCacheRoot, artifact.ID)
+	var previewPNG []byte
+	if err == nil {
+		ctx, cancel = context.WithTimeout(parent, 45*time.Second)
+		previewPNG, err = thumbnail.PNG(ctx, path)
+		cancel()
+	}
+	key := "previews/" + artifact.ID + ".png"
+	if err == nil {
+		ctx, cancel = context.WithTimeout(parent, 45*time.Second)
+		_, err = w.uploader.Upload(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(w.derivedBucket),
+			Key:           aws.String(key),
+			Body:          bytes.NewReader(previewPNG),
+			ContentLength: aws.Int64(int64(len(previewPNG))),
+			ContentType:   aws.String("image/png"),
+			Metadata:      map[string]string{"artifact-id": artifact.ID, "purpose": "map-preview"},
+		})
+		cancel()
+	}
+	if err != nil {
+		slog.Error("render artifact preview", "artifact_id", artifact.ID, "error", err)
+		failCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
+		_ = w.store.FailArtifactPreview(failCtx, artifact.ID, err.Error())
+		stop()
+		return true
+	}
+	completeCtx, stop := context.WithTimeout(parent, 20*time.Second)
+	err = w.store.CompleteArtifactPreview(completeCtx, artifact.ID, key)
+	stop()
+	if err != nil {
+		slog.Error("record artifact preview", "artifact_id", artifact.ID, "error", err)
 	}
 	return true
 }

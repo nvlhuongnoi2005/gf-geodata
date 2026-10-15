@@ -241,6 +241,24 @@ the dedicated `geodata-mbtiles-data` PVC and activates it with an atomic
 rename. The GeoData tile gateway reads that SQLite file directly; it does not
 call, copy into, restart, or wait for the existing WebGIS TileServer.
 
+### Published-map previews
+
+After activation in `geodata-mbtiles-data`, the same
+`geodata-mbtiles-store-warmer` claims a preview job, produces a 640×360 PNG,
+and stores it privately at `geodata-derived/previews/<artifact-id>.png`. The
+object key is never sent to WebGIS. The catalog instead contains a GeoData
+`/preview.png` URL; the gateway evaluates the published release's ACL before
+streaming it. WebGIS downloads that URL through its authenticated Controller
+proxy and displays a browser object URL, since a plain `<img>` cannot attach a
+Bearer token.
+
+Raster MBTiles show an actual tile. Vector MBTiles currently receive a
+deterministic placeholder image. A geographically faithful vector thumbnail
+requires a dedicated MapLibre Native renderer plus the selected style, sprite,
+and glyph assets; it is intentionally not represented as a true map render.
+Migration `014_artifact_previews.sql` queues every already-serving artifact
+once, so no manual S3 copy is needed after rollout.
+
 The migration `011_geodata_mbtiles_store.sql` marks existing successful
 artifacts for one-time re-materialization. Stop the previous WebGIS cache
 warmer before applying this version, otherwise two workers can compete for the

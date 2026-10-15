@@ -85,6 +85,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", g.health)
 	mux.HandleFunc("GET /v1/catalog", g.catalog)
+	mux.HandleFunc("GET /v1/releases/{slug}/artifacts/{artifactID}/preview.png", g.preview)
 	mux.HandleFunc("GET /v1/releases/{slug}/tilejson/{artifactID}", g.tileJSON)
 	mux.HandleFunc("GET /v1/releases/{slug}/tiles/{artifactID}/{z}/{x}/{y}", g.tile)
 	mux.HandleFunc("GET /v1/releases/{slug}/style.json", g.style)
@@ -241,22 +242,23 @@ func (g *gateway) catalog(w http.ResponseWriter, r *http.Request) {
 			stylePath = "/v1/releases/" + url.PathEscape(item.Release.Slug) + "/style.json"
 		}
 		response = append(response, mapCatalogItem{
-			ID:         item.Release.Slug,
-			Name:       item.Release.Name,
-			Label:      item.Release.Name + " — " + item.Release.Version,
-			MapCode:    item.Release.MapCode,
-			Version:    item.Release.Version,
-			DataType:   item.DataType,
-			Role:       catalogRole(item.DataType),
-			Format:     item.Artifact.TileFormat,
-			Kind:       catalogKind(item.Artifact.TileFormat),
-			TilePath:   "/v1/releases/" + url.PathEscape(item.Release.Slug) + "/tiles/" + url.PathEscape(item.Artifact.ArtifactID) + "/{z}/{x}/{y}",
-			StylePath:  stylePath,
-			MinZoom:    item.Artifact.MinZoom,
-			MaxZoom:    item.Artifact.MaxZoom,
-			TileSize:   256,
-			SourceName: item.Artifact.SourceName,
-			Visibility: item.Release.Visibility,
+			ID:          item.Release.Slug,
+			Name:        item.Release.Name,
+			Label:       item.Release.Name + " — " + item.Release.Version,
+			MapCode:     item.Release.MapCode,
+			Version:     item.Release.Version,
+			DataType:    item.DataType,
+			Role:        catalogRole(item.DataType),
+			Format:      item.Artifact.TileFormat,
+			Kind:        catalogKind(item.Artifact.TileFormat),
+			TilePath:    "/v1/releases/" + url.PathEscape(item.Release.Slug) + "/tiles/" + url.PathEscape(item.Artifact.ArtifactID) + "/{z}/{x}/{y}",
+			StylePath:   stylePath,
+			PreviewPath: previewPath(item.Release.Slug, item.Artifact),
+			MinZoom:     item.Artifact.MinZoom,
+			MaxZoom:     item.Artifact.MaxZoom,
+			TileSize:    256,
+			SourceName:  item.Artifact.SourceName,
+			Visibility:  item.Release.Visibility,
 		})
 	}
 	// The payload varies by identity, so shared browser/proxy caches must not
@@ -268,22 +270,30 @@ func (g *gateway) catalog(w http.ResponseWriter, r *http.Request) {
 }
 
 type mapCatalogItem struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Label      string `json:"label"`
-	MapCode    string `json:"mapCode"`
-	Version    string `json:"version"`
-	DataType   string `json:"dataType"`
-	Role       string `json:"role"`
-	Format     string `json:"format"`
-	Kind       string `json:"kind"`
-	TilePath   string `json:"tilePath"`
-	StylePath  string `json:"stylePath,omitempty"`
-	MinZoom    int    `json:"minZoom"`
-	MaxZoom    int    `json:"maxZoom"`
-	TileSize   int    `json:"tileSize"`
-	SourceName string `json:"sourceName"`
-	Visibility string `json:"visibility"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Label       string `json:"label"`
+	MapCode     string `json:"mapCode"`
+	Version     string `json:"version"`
+	DataType    string `json:"dataType"`
+	Role        string `json:"role"`
+	Format      string `json:"format"`
+	Kind        string `json:"kind"`
+	TilePath    string `json:"tilePath"`
+	StylePath   string `json:"stylePath,omitempty"`
+	PreviewPath string `json:"previewPath,omitempty"`
+	MinZoom     int    `json:"minZoom"`
+	MaxZoom     int    `json:"maxZoom"`
+	TileSize    int    `json:"tileSize"`
+	SourceName  string `json:"sourceName"`
+	Visibility  string `json:"visibility"`
+}
+
+func previewPath(slug string, artifact catalog.ReleaseArtifact) string {
+	if artifact.PreviewStatus != "ready" || artifact.PreviewObjectKey == "" {
+		return ""
+	}
+	return "/v1/releases/" + url.PathEscape(slug) + "/artifacts/" + url.PathEscape(artifact.ArtifactID) + "/preview.png"
 }
 
 func catalogKind(format string) string {
@@ -302,6 +312,39 @@ func catalogRole(dataType string) string {
 	default:
 		return "basemap"
 	}
+}
+
+// preview streams the worker-produced PNG only after resolving the published
+// release and its ACL. The object key remains server-internal and is never
+// exposed in the catalog or browser.
+func (g *gateway) preview(w http.ResponseWriter, r *http.Request) {
+	release, artifacts, ok := g.release(w, r)
+	if !ok {
+		return
+	}
+	artifactID := r.PathValue("artifactID")
+	for _, artifact := range artifacts {
+		if artifact.ArtifactID != artifactID {
+			continue
+		}
+		if artifact.PreviewStatus != "ready" || artifact.PreviewObjectKey == "" {
+			http.NotFound(w, r)
+			return
+		}
+		object, err := g.s3.GetObject(r.Context(), &s3.GetObjectInput{
+			Bucket: aws.String(g.styleBucket), Key: aws.String(artifact.PreviewObjectKey),
+		})
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer object.Body.Close()
+		w.Header().Set("Content-Type", "image/png")
+		setTileCacheControl(w, release)
+		_, _ = io.Copy(w, object.Body)
+		return
+	}
+	http.NotFound(w, r)
 }
 func (g *gateway) tileJSON(w http.ResponseWriter, r *http.Request) {
 	_, arts, ok := g.release(w, r)

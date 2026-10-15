@@ -184,6 +184,7 @@ type ReleaseArtifact struct {
 	ReleaseID, ArtifactID, SourceName, OutputObjectKey string
 	TilePrefix, TileFormat                             string
 	ServingBackend, TileServerDataset, WarmStatus      string
+	PreviewStatus, PreviewObjectKey                    string
 	DataType                                           string
 	MinZoom, MaxZoom                                   int
 	Bounds, VectorLayers                               json.RawMessage
@@ -196,6 +197,13 @@ type PublishedMap struct {
 	Release  MapRelease
 	Artifact ReleaseArtifact
 	DataType string
+}
+
+// PreviewArtifact is an immutable MBTiles artifact waiting for an image
+// thumbnail. It intentionally contains no release identity: access is always
+// enforced later by the release gateway endpoint.
+type PreviewArtifact struct {
+	ID string
 }
 
 type NewRawUpload struct {
@@ -536,7 +544,8 @@ func (s *Store) CompleteArtifactCache(ctx context.Context, artifact CacheArtifac
 UPDATE conversion_jobs
 SET tile_cache_status='ready', tile_serving_backend=$2, tile_server_dataset=$3, tile_format=$4,
     tile_bounds=$5::jsonb, tile_vector_layers=$6::jsonb, min_zoom=$7, max_zoom=$8,
-    tile_cache_warmed_at=NOW(), tile_cache_failure=NULL
+    tile_cache_warmed_at=NOW(), tile_cache_failure=NULL, preview_status='pending',
+    preview_object_key=NULL, preview_failure=NULL, preview_updated_at=NOW()
 WHERE id=$1 AND status='succeeded' AND tile_cache_status='warming'`, artifact.ID, servingBackend, tile.TileServerDataset, tile.TileFormat, defaultJSON(tile.Bounds, "[-180,-85.051129,180,85.051129]"), defaultJSON(tile.VectorLayers, "[]"), tile.MinZoom, tile.MaxZoom)
 	if err != nil {
 		return err
@@ -560,6 +569,56 @@ WHERE artifact_id=$1 AND warm_status<>'ready'`, artifact.ID, servingBackend, til
 
 func (s *Store) FailArtifactCache(ctx context.Context, artifactID, message string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE conversion_jobs SET tile_cache_status='failed',tile_cache_failure=LEFT($2,4000) WHERE id=$1 AND tile_cache_status='warming'`, artifactID, message)
+	return err
+}
+
+// ClaimPreviewArtifact reserves one serving-ready direct-MBTiles artifact for
+// thumbnail rendering. Failed renders are retried after a short backoff.
+func (s *Store) ClaimPreviewArtifact(ctx context.Context) (*PreviewArtifact, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	artifact := &PreviewArtifact{}
+	err = tx.QueryRow(ctx, `
+SELECT id
+FROM conversion_jobs
+WHERE status='succeeded' AND output_object_key IS NOT NULL
+  AND tile_cache_status='ready'
+  AND COALESCE(tile_serving_backend,'geodata_mbtiles')='geodata_mbtiles'
+  AND (preview_status='pending' OR (preview_status='failed' AND COALESCE(preview_updated_at,TO_TIMESTAMP(0)) < NOW() - INTERVAL '5 minutes'))
+ORDER BY CASE preview_status WHEN 'pending' THEN 0 ELSE 1 END, finished_at NULLS LAST, created_at
+FOR UPDATE SKIP LOCKED
+LIMIT 1`).Scan(&artifact.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, tx.Commit(ctx)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE conversion_jobs SET preview_status='rendering',preview_failure=NULL,preview_attempts=preview_attempts+1,preview_updated_at=NOW() WHERE id=$1`, artifact.ID); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return artifact, nil
+}
+
+func (s *Store) CompleteArtifactPreview(ctx context.Context, artifactID, objectKey string) error {
+	result, err := s.pool.Exec(ctx, `UPDATE conversion_jobs SET preview_status='ready',preview_object_key=$2,preview_failure=NULL,preview_updated_at=NOW() WHERE id=$1 AND preview_status='rendering'`, artifactID, objectKey)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return ErrConversionJobNotActive
+	}
+	return nil
+}
+
+func (s *Store) FailArtifactPreview(ctx context.Context, artifactID, message string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE conversion_jobs SET preview_status='failed',preview_failure=LEFT($2,4000),preview_updated_at=NOW() WHERE id=$1 AND preview_status='rendering'`, artifactID, message)
 	return err
 }
 
@@ -961,7 +1020,7 @@ func (s *Store) PublishedRelease(ctx context.Context, slug string) (MapRelease, 
 	if err != nil {
 		return MapRelease{}, nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT a.release_id,a.artifact_id,r.display_name,'',COALESCE(a.tile_prefix,''),COALESCE(a.tile_format,''),COALESCE(a.serving_backend,'object_store'),COALESCE(a.tile_server_dataset,''),COALESCE(a.warm_status,'not_required'),COALESCE(r.data_type,'other'),a.min_zoom,a.max_zoom,COALESCE(a.bounds::text,'[-180,-85.051129,180,85.051129]'),COALESCE(a.vector_layers::text,'[]') FROM map_release_artifacts a JOIN conversion_jobs j ON j.id=a.artifact_id JOIN raw_uploads r ON r.id=j.raw_upload_id WHERE a.release_id=$1`, release.ID)
+	rows, err := s.pool.Query(ctx, `SELECT a.release_id,a.artifact_id,r.display_name,'',COALESCE(a.tile_prefix,''),COALESCE(a.tile_format,''),COALESCE(a.serving_backend,'object_store'),COALESCE(a.tile_server_dataset,''),COALESCE(a.warm_status,'not_required'),COALESCE(j.preview_status,'pending'),COALESCE(j.preview_object_key,''),COALESCE(r.data_type,'other'),a.min_zoom,a.max_zoom,COALESCE(a.bounds::text,'[-180,-85.051129,180,85.051129]'),COALESCE(a.vector_layers::text,'[]') FROM map_release_artifacts a JOIN conversion_jobs j ON j.id=a.artifact_id JOIN raw_uploads r ON r.id=j.raw_upload_id WHERE a.release_id=$1`, release.ID)
 	if err != nil {
 		return MapRelease{}, nil, err
 	}
@@ -970,7 +1029,7 @@ func (s *Store) PublishedRelease(ctx context.Context, slug string) (MapRelease, 
 	for rows.Next() {
 		var item ReleaseArtifact
 		var bounds, vectorLayers string
-		if err := rows.Scan(&item.ReleaseID, &item.ArtifactID, &item.SourceName, &item.OutputObjectKey, &item.TilePrefix, &item.TileFormat, &item.ServingBackend, &item.TileServerDataset, &item.WarmStatus, &item.DataType, &item.MinZoom, &item.MaxZoom, &bounds, &vectorLayers); err != nil {
+		if err := rows.Scan(&item.ReleaseID, &item.ArtifactID, &item.SourceName, &item.OutputObjectKey, &item.TilePrefix, &item.TileFormat, &item.ServingBackend, &item.TileServerDataset, &item.WarmStatus, &item.PreviewStatus, &item.PreviewObjectKey, &item.DataType, &item.MinZoom, &item.MaxZoom, &bounds, &vectorLayers); err != nil {
 			return MapRelease{}, nil, err
 		}
 		item.Bounds, item.VectorLayers = json.RawMessage(bounds), json.RawMessage(vectorLayers)
@@ -991,7 +1050,7 @@ SELECT
   COALESCE(r.style_version_id::text,''),
   a.release_id,a.artifact_id,raw.display_name,COALESCE(a.tile_format,''),
   COALESCE(a.serving_backend,''),COALESCE(a.warm_status,''),
-  COALESCE(raw.data_type,'other'),a.min_zoom,a.max_zoom,
+  COALESCE(raw.data_type,'other'),COALESCE(j.preview_status,'pending'),COALESCE(j.preview_object_key,''),a.min_zoom,a.max_zoom,
   COALESCE(a.bounds::text,'[-180,-85.051129,180,85.051129]'),
   COALESCE(a.vector_layers::text,'[]')
 FROM map_releases r
@@ -1036,6 +1095,7 @@ ORDER BY r.published_at DESC NULLS LAST,r.updated_at DESC`, administrator, userI
 			&item.Release.StyleVersionID, &item.Artifact.ReleaseID, &item.Artifact.ArtifactID,
 			&item.Artifact.SourceName, &item.Artifact.TileFormat,
 			&item.Artifact.ServingBackend, &item.Artifact.WarmStatus, &item.DataType,
+			&item.Artifact.PreviewStatus, &item.Artifact.PreviewObjectKey,
 			&item.Artifact.MinZoom, &item.Artifact.MaxZoom, &bounds, &vectorLayers,
 		); err != nil {
 			return nil, err

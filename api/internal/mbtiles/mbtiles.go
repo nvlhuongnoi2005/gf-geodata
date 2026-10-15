@@ -81,6 +81,21 @@ SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_ro
 	return data, err
 }
 
+// ReadPreviewTile returns one representative tile without relying on a
+// particular bounds/zoom convention. It is used only by the asynchronous
+// thumbnail worker, never by the tile serving hot path.
+func (r *Reader) ReadPreviewTile(ctx context.Context) ([]byte, error) {
+	var data []byte
+	err := r.db.QueryRowContext(ctx, `
+SELECT tile_data FROM tiles
+ORDER BY zoom_level DESC, tile_column, tile_row
+LIMIT 1`).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrTileNotFound
+	}
+	return data, err
+}
+
 // ArtifactPath creates the only filename layout accepted by the GeoData tile
 // store. Artifact IDs originate from PostgreSQL UUIDs, but validation here
 // keeps storage-path construction safe even if this package is reused.
