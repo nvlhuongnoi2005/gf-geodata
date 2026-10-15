@@ -203,33 +203,29 @@ func (g *gateway) claims(r *http.Request) (jwt.MapClaims, bool) {
 // map merely by guessing an MBTiles artifact identifier.
 func (g *gateway) catalog(w http.ResponseWriter, r *http.Request) {
 	userID, organization := "", ""
-	administrator := false
 	if authorization := strings.TrimSpace(r.Header.Get("Authorization")); authorization != "" {
 		claims, ok := g.claims(r)
 		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		administrator = isAdmin(claims, g.adminRole)
-		if !administrator {
-			userID, _ = claims["sub"].(string)
-			if userID == "" {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
-			if g.directory == nil {
-				http.Error(w, "restricted release directory is unavailable", http.StatusServiceUnavailable)
-				return
-			}
-			var err error
-			organization, err = g.directory.OrganizationForUser(r.Context(), userID)
-			if err != nil && !errors.Is(err, directory.ErrNotFound) {
-				http.Error(w, "access directory is unavailable", http.StatusServiceUnavailable)
-				return
-			}
+		userID, _ = claims["sub"].(string)
+		if userID == "" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if g.directory == nil {
+			http.Error(w, "restricted release directory is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		var err error
+		organization, err = g.directory.OrganizationForUser(r.Context(), userID)
+		if err != nil && !errors.Is(err, directory.ErrNotFound) {
+			http.Error(w, "access directory is unavailable", http.StatusServiceUnavailable)
+			return
 		}
 	}
-	items, err := g.store.ListPublishedMaps(r.Context(), userID, organization, administrator)
+	items, err := g.store.ListPublishedMaps(r.Context(), userID, organization)
 	if err != nil {
 		log.Printf("list published map catalog: %v", err)
 		http.Error(w, "catalog is temporarily unavailable", http.StatusServiceUnavailable)

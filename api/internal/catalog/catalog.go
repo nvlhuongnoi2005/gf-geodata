@@ -1044,9 +1044,10 @@ func (s *Store) PublishedRelease(ctx context.Context, slug string) (MapRelease, 
 
 // ListPublishedMaps returns only published direct-MBTiles releases the viewer
 // can open. Public releases are visible to everyone; named grants are applied
-// by user or organisation; GeoData administrators may inspect every release.
-// This is an authorization boundary, not merely a UI filter.
-func (s *Store) ListPublishedMaps(ctx context.Context, userID, organization string, administrator bool) ([]PublishedMap, error) {
+// by user or organisation. Administration of GeoData does not implicitly grant
+// map-view access in WebGIS: this is an authorization boundary, not merely a
+// UI filter.
+func (s *Store) ListPublishedMaps(ctx context.Context, userID, organization string) ([]PublishedMap, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT
   r.id,r.name,r.map_code,r.version,r.slug,r.description,r.release_notes,
@@ -1072,17 +1073,16 @@ JOIN conversion_jobs j ON j.id=a.artifact_id
 JOIN raw_uploads raw ON raw.id=j.raw_upload_id
 WHERE r.status='published'
   AND (
-    $1::boolean
-    OR r.visibility='public'
+    r.visibility='public'
     OR EXISTS (
       SELECT 1 FROM access_grants g
       WHERE g.release_id=r.id AND g.status='active' AND (
-        (g.principal_type='user' AND g.principal_id=$2)
-        OR (g.principal_type='organization' AND $3<>'' AND lower(g.principal_id)=lower($3))
+        (g.principal_type='user' AND g.principal_id=$1)
+        OR (g.principal_type='organization' AND $2<>'' AND lower(g.principal_id)=lower($2))
       )
     )
   )
-ORDER BY r.published_at DESC NULLS LAST,r.updated_at DESC`, administrator, userID, organization)
+ORDER BY r.published_at DESC NULLS LAST,r.updated_at DESC`, userID, organization)
 	if err != nil {
 		return nil, err
 	}
