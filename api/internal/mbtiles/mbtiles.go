@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -36,6 +37,63 @@ type Metadata struct {
 	MaxZoom      int
 	Bounds       Bounds
 	VectorLayers []VectorLayer
+}
+
+// Reader is a long-lived, read-only handle for an immutable MBTiles file.
+// Keeping the SQLite pool open is important on the tile hot path: opening a
+// database for every z/x/y request adds filesystem and schema work that is
+// unnecessary after an artifact has been activated atomically.
+type Reader struct {
+	db *sql.DB
+}
+
+// OpenReader opens an immutable MBTiles artifact for tile serving. The caller
+// owns the returned Reader and must Close it when the process stops.
+func OpenReader(path string) (*Reader, error) {
+	db, err := open(path)
+	if err != nil {
+		return nil, err
+	}
+	// An artifact is immutable once it is atomically placed in the tile store.
+	// A small pool supports concurrent map requests without creating an
+	// unbounded SQLite connection count per published artifact.
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(2)
+	return &Reader{db: db}, nil
+}
+
+func (r *Reader) Close() error { return r.db.Close() }
+
+// ReadTile returns XYZ tile bytes. MBTiles stores rows in TMS order, so Y is
+// inverted before querying. The function does not decompress vector tiles:
+// clients receive their original encoding.
+func (r *Reader) ReadTile(ctx context.Context, z, x, y int) ([]byte, error) {
+	if z < 0 || z > 30 || x < 0 || y < 0 || x >= 1<<z || y >= 1<<z {
+		return nil, ErrTileNotFound
+	}
+	var data []byte
+	tmsY := (1 << z) - 1 - y
+	err := r.db.QueryRowContext(ctx, `
+SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?`, z, x, tmsY).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrTileNotFound
+	}
+	return data, err
+}
+
+// ArtifactPath creates the only filename layout accepted by the GeoData tile
+// store. Artifact IDs originate from PostgreSQL UUIDs, but validation here
+// keeps storage-path construction safe even if this package is reused.
+func ArtifactPath(root, artifactID string) (string, error) {
+	if artifactID == "" || strings.ContainsAny(artifactID, `\\/`) {
+		return "", errors.New("invalid MBTiles artifact identifier")
+	}
+	for _, character := range artifactID {
+		if !(character >= 'a' && character <= 'f') && !(character >= 'A' && character <= 'F') && !(character >= '0' && character <= '9') && character != '-' {
+			return "", errors.New("invalid MBTiles artifact identifier")
+		}
+	}
+	return filepath.Join(root, "artifact-"+strings.ToLower(artifactID)+".mbtiles"), nil
 }
 
 // EnsureServingRole adds the TileServer role used by the existing WebGIS
@@ -121,22 +179,12 @@ func ReadMetadata(ctx context.Context, path string) (Metadata, error) {
 }
 
 func ReadTile(ctx context.Context, path string, z, x, y int) ([]byte, error) {
-	db, err := open(path)
+	reader, err := OpenReader(path)
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
-	if z < 0 || z > 30 || x < 0 || y < 0 || x >= 1<<z || y >= 1<<z {
-		return nil, ErrTileNotFound
-	}
-	var data []byte
-	tmsY := (1 << z) - 1 - y
-	err = db.QueryRowContext(ctx, `
-SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?`, z, x, tmsY).Scan(&data)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrTileNotFound
-	}
-	return data, err
+	defer reader.Close()
+	return reader.ReadTile(ctx, z, x, y)
 }
 
 func parseZoom(raw string, fallback int) int {

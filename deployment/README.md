@@ -184,10 +184,12 @@ kubectl -n storage rollout status statefulset/seaweedfs --timeout=10m
 kubectl -n storage wait --for=condition=complete job/geodata-bucket-bootstrap --timeout=5m
 kubectl -n tile-server rollout restart deployment/geodata-upload
 kubectl -n tile-server rollout restart deployment/geodata-worker
+kubectl -n tile-server rollout restart deployment/geodata-mbtiles-store-warmer
 kubectl -n tile-server rollout restart deployment/geodata-tile-gateway
 kubectl -n tile-server rollout restart deployment/geodata-frontend
 kubectl -n tile-server rollout status deployment/geodata-upload --timeout=5m
 kubectl -n tile-server rollout status deployment/geodata-worker --timeout=5m
+kubectl -n tile-server rollout status deployment/geodata-mbtiles-store-warmer --timeout=5m
 kubectl -n tile-server rollout status deployment/geodata-tile-gateway --timeout=5m
 kubectl -n tile-server rollout status deployment/geodata-frontend --timeout=5m
 ```
@@ -231,42 +233,28 @@ PBF, give Docker Desktop at least 10 GiB RAM (or run the worker on a dedicated
 node); lowering the reservation only makes scheduling possible and does not
 reduce Tilemaker's actual peak-memory requirement.
 
-## Register artifacts and warm the existing WebGIS TileServer
+## Direct GeoData MBTiles serving
 
-Publishing no longer expands one MBTiles file into a large number of S3 tile
-objects. After conversion the normal worker writes the immutable source to
-`geodata-derived`; then the separate cache warmer in namespace `webgis` mounts
-the existing `tile-data` PVC under its `mbtiles/geodata` directory, downloads
-the MBTiles once, supplies missing WebGIS `baselayer` or `overlay` metadata,
-activates it atomically, rolls only `webgis/tile-server`, and
-waits for `/datas/{dataset}.json`. The warmer records the artifact as `ready`.
-Only ready artifacts can be selected for a draft, so publishing is a fast
-metadata transition. The GeoData tile gateway preserves authentication and
-authorization while proxying the fast local TileServer read.
+After conversion, the normal worker stores the immutable MBTiles source in
+`geodata-derived`. The `geodata-mbtiles-store-warmer` downloads it once into
+the dedicated `geodata-mbtiles-data` PVC and activates it with an atomic
+rename. The GeoData tile gateway reads that SQLite file directly; it does not
+call, copy into, restart, or wait for the existing WebGIS TileServer.
 
-Create namespace-local copies of the existing catalog and worker S3 Secrets
-(they are namespace-scoped), then apply the separate WebGIS-owned workload:
+The migration `011_geodata_mbtiles_store.sql` marks existing successful
+artifacts for one-time re-materialization. Stop the previous WebGIS cache
+warmer before applying this version, otherwise two workers can compete for the
+same artifact state:
 
 ```powershell
-& .\deployment\scripts\create-geodata-tileserver-cache-warmer-secrets.ps1
+kubectl -n webgis scale deployment/geodata-tileserver-cache-warmer --replicas=0
 kubectl apply -k deployment
-kubectl apply -k deployment/webgis-cache-warmer
-kubectl -n webgis rollout status deployment/geodata-tileserver-cache-warmer --timeout=5m
-kubectl -n tile-server rollout restart deployment/geodata-worker,deployment/geodata-tile-gateway
-kubectl -n tile-server rollout status deployment/geodata-worker --timeout=5m
+kubectl -n tile-server rollout status deployment/geodata-mbtiles-store-warmer --timeout=5m
 kubectl -n tile-server rollout status deployment/geodata-tile-gateway --timeout=5m
 ```
 
-The cache warmer's service account can only `get` and `patch` the one
-`webgis/tile-server` Deployment; the patch changes a pod-template annotation
-after a new MBTiles file is atomically placed, forcing TileServer to rebuild
-its otherwise startup-only catalog. Apply migrations
-`009_artifact_cache_ready.sql` and `010_access_policy_and_cache_retry.sql`
-before rolling these workloads.
-
-On the current one-node WebGIS setup, `tile-data` is a `ReadWriteOnce` PVC and
-the TileServer is read-only while the warmer writes. This is sufficient for the
-single-node cluster. Before scaling to multiple nodes or TileServer replicas,
-replace `webgis/tile-data` with an RWX NFS (or equivalent shared filesystem)
-PVC mounted at the same `/tile-server/data` path. Do not mount a PVC across
-namespaces; Kubernetes does not permit that.
+On the current single-node cluster, `geodata-mbtiles-data` is a 100Gi
+`ReadWriteOnce` PVC. This supports the warmer and gateway pods on that node.
+For multiple nodes, provision an RWX filesystem (for example NFS or CephFS),
+or run a node-local cache warmer and gateway together on every node. Keep
+`geodata-derived` as the immutable recovery copy in either case.

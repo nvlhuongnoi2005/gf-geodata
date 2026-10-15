@@ -34,16 +34,17 @@ import (
 var errConversionCanceled = errors.New("conversion canceled")
 
 type worker struct {
-	store         *catalog.Store
-	objectStore   *s3.Client
-	downloader    *manager.Downloader
-	uploader      *manager.Uploader
-	rawBucket     string
-	derivedBucket string
-	workspaceRoot string
-	tileCacheRoot string
-	tileServerURL string
-	converter     *tiling.Converter
+	store          *catalog.Store
+	objectStore    *s3.Client
+	downloader     *manager.Downloader
+	uploader       *manager.Uploader
+	rawBucket      string
+	derivedBucket  string
+	workspaceRoot  string
+	tileCacheRoot  string
+	tileServerURL  string
+	servingBackend string
+	converter      *tiling.Converter
 }
 
 func required(name string) string {
@@ -61,8 +62,8 @@ func main() {
 	store := openCatalog(ctx)
 	defer store.Close()
 	mode := environmentOr("WORKER_MODE", "conversion")
-	if mode != "conversion" && mode != "tileserver-cache-warmer" {
-		log.Fatalf("WORKER_MODE must be conversion or tileserver-cache-warmer")
+	if mode != "conversion" && mode != "tileserver-cache-warmer" && mode != "mbtiles-store-warmer" {
+		log.Fatalf("WORKER_MODE must be conversion, tileserver-cache-warmer, or mbtiles-store-warmer")
 	}
 	app := &worker{store: store, derivedBucket: required("S3_DERIVED_BUCKET"), workspaceRoot: environmentOr("WORKSPACE_ROOT", "/work")}
 	app.objectStore = openS3(ctx)
@@ -78,18 +79,22 @@ func main() {
 			OSMProcessPath:   environmentOr("TILEMAKER_PROCESS_PATH", "/usr/src/app/resources/process-openmaptiles.lua"),
 			RasterTileFormat: environmentOr("RASTER_TILE_FORMAT", "PNG"),
 		})
-	} else {
+	} else if mode == "tileserver-cache-warmer" {
 		app.tileCacheRoot = required("TILE_SERVER_CACHE_ROOT")
 		app.tileServerURL = strings.TrimRight(required("TILE_SERVER_INTERNAL_URL"), "/")
+		app.servingBackend = "tileserver_cache"
+	} else {
+		app.tileCacheRoot = required("MBTILES_STORE_ROOT")
+		app.servingBackend = "geodata_mbtiles"
 	}
 
 	pollEvery := durationOr("JOB_POLL_INTERVAL", 5*time.Second)
 	slog.Info("geodata worker started", "mode", mode, "poll_interval", pollEvery.String())
 	for {
 		worked := false
-		if mode == "tileserver-cache-warmer" {
+		if mode == "tileserver-cache-warmer" || mode == "mbtiles-store-warmer" {
 			worked = app.warmOne(ctx)
-			if !worked {
+			if !worked && mode == "tileserver-cache-warmer" {
 				// Compatibility path for drafts created before artifact warming.
 				worked = app.publishOne(ctx)
 			}
@@ -109,7 +114,7 @@ func main() {
 
 func (w *worker) warmOne(parent context.Context) bool {
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
-	artifact, err := w.store.ClaimCacheArtifact(ctx)
+	artifact, err := w.store.ClaimCacheArtifact(ctx, w.servingBackend)
 	cancel()
 	if err != nil {
 		slog.Error("claim artifact cache warm", "error", err)
@@ -127,7 +132,7 @@ func (w *worker) warmOne(parent context.Context) bool {
 		return true
 	}
 	completeCtx, stop := context.WithTimeout(parent, 20*time.Second)
-	err = w.store.CompleteArtifactCache(completeCtx, *artifact, warmed)
+	err = w.store.CompleteArtifactCache(completeCtx, *artifact, warmed, w.servingBackend)
 	stop()
 	if err != nil {
 		slog.Error("record warmed artifact", "artifact_id", artifact.ID, "error", err)
@@ -258,13 +263,19 @@ func (w *worker) publishArtifact(ctx context.Context, releaseID string, artifact
 
 func (w *worker) warmArtifact(ctx context.Context, artifactID, outputObjectKey, dataType, sourceFormat string) (catalog.ReleaseArtifact, error) {
 	if err := os.MkdirAll(w.tileCacheRoot, 0o750); err != nil {
-		return catalog.ReleaseArtifact{}, fmt.Errorf("create TileServer cache root: %w", err)
+		return catalog.ReleaseArtifact{}, fmt.Errorf("create MBTiles serving root: %w", err)
 	}
 	dataset := "geodata-" + strings.ReplaceAll(artifactID, "-", "")
-	target := filepath.Join(w.tileCacheRoot, dataset+".mbtiles")
+	target, err := mbtiles.ArtifactPath(w.tileCacheRoot, artifactID)
+	if err != nil {
+		return catalog.ReleaseArtifact{}, err
+	}
+	if w.servingBackend == "tileserver_cache" {
+		target = filepath.Join(w.tileCacheRoot, dataset+".mbtiles")
+	}
 	file, err := os.CreateTemp(w.tileCacheRoot, "."+dataset+"-*.mbtiles")
 	if err != nil {
-		return catalog.ReleaseArtifact{}, fmt.Errorf("create temporary TileServer artifact: %w", err)
+		return catalog.ReleaseArtifact{}, fmt.Errorf("create temporary MBTiles artifact: %w", err)
 	}
 	temporary := file.Name()
 	defer os.Remove(temporary)
@@ -278,20 +289,21 @@ func (w *worker) warmArtifact(ctx context.Context, artifactID, outputObjectKey, 
 	}
 	closeErr := file.Close()
 	if downloadErr != nil {
-		return catalog.ReleaseArtifact{}, fmt.Errorf("download derived artifact into TileServer cache: %w", downloadErr)
+		return catalog.ReleaseArtifact{}, fmt.Errorf("download derived artifact into serving volume: %w", downloadErr)
 	}
 	if closeErr != nil {
 		return catalog.ReleaseArtifact{}, closeErr
 	}
-	// WebGIS classifies datasets from the standard MBTiles `type` metadata.
-	// Preserve a producer-specified role; otherwise derive a safe default from
-	// the source classification selected at upload time.
-	if err := mbtiles.EnsureServingRole(ctx, temporary, defaultTileServerRole(dataType, sourceFormat)); err != nil {
-		return catalog.ReleaseArtifact{}, fmt.Errorf("set cached MBTiles serving role: %w", err)
+	if w.servingBackend == "tileserver_cache" {
+		// The legacy WebGIS TileServer classifies datasets from this metadata.
+		// Direct GeoData serving does not modify the immutable MBTiles payload.
+		if err := mbtiles.EnsureServingRole(ctx, temporary, defaultTileServerRole(dataType, sourceFormat)); err != nil {
+			return catalog.ReleaseArtifact{}, fmt.Errorf("set cached MBTiles serving role: %w", err)
+		}
 	}
 	metadata, err := mbtiles.ReadMetadata(ctx, temporary)
 	if err != nil {
-		return catalog.ReleaseArtifact{}, fmt.Errorf("read cached MBTiles metadata: %w", err)
+		return catalog.ReleaseArtifact{}, fmt.Errorf("read MBTiles metadata: %w", err)
 	}
 	bounds, err := json.Marshal(metadata.Bounds.Values())
 	if err != nil {
@@ -301,10 +313,13 @@ func (w *worker) warmArtifact(ctx context.Context, artifactID, outputObjectKey, 
 	if err != nil {
 		return catalog.ReleaseArtifact{}, fmt.Errorf("encode vector layer metadata: %w", err)
 	}
-	// Rename on the shared PVC is atomic. TileServer only ever observes a
-	// complete SQLite file, never the temporary download.
+	// Rename on the serving PVC is atomic. The tile gateway only ever observes
+	// a complete SQLite file, never the temporary S3 download.
 	if err := os.Rename(temporary, target); err != nil {
-		return catalog.ReleaseArtifact{}, fmt.Errorf("activate TileServer artifact: %w", err)
+		return catalog.ReleaseArtifact{}, fmt.Errorf("activate MBTiles artifact: %w", err)
+	}
+	if w.servingBackend == "geodata_mbtiles" {
+		return catalog.ReleaseArtifact{ArtifactID: artifactID, TileFormat: metadata.Format, MinZoom: metadata.MinZoom, MaxZoom: metadata.MaxZoom, Bounds: bounds, VectorLayers: vectorLayers}, nil
 	}
 	if err := w.restartTileServer(ctx); err != nil {
 		return catalog.ReleaseArtifact{}, err

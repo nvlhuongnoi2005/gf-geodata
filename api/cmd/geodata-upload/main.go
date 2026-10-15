@@ -450,7 +450,7 @@ func (s *server) createRelease(w http.ResponseWriter, r *http.Request) {
 	release := catalog.MapRelease{ID: id, Name: strings.TrimSpace(request.Name), MapCode: mapCode, Version: request.Version, Slug: slug, Description: strings.TrimSpace(request.Description), ReleaseNotes: strings.TrimSpace(request.ReleaseNotes), Visibility: "restricted", Status: "draft", CreatedBy: actor, CreatedAt: time.Now().UTC()}
 	if err = s.store.CreateRelease(ctx, release, request.ArtifactIDs); err != nil {
 		if errors.Is(err, catalog.ErrConversionJobNotActive) {
-			http.Error(w, "the selected MBTiles output is not ready in TileServer", http.StatusConflict)
+			http.Error(w, "the selected MBTiles output is not ready in GeoData tile storage", http.StatusConflict)
 			return
 		}
 		// Keep database implementation details out of the browser, but retain

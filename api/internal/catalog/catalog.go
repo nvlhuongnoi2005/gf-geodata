@@ -101,8 +101,8 @@ type ConversionJobView struct {
 }
 
 // ConversionArtifactView is the safe, browser-facing metadata for a successful
-// MBTiles conversion. CacheStatus makes the hand-off to TileServer observable
-// without exposing an object key or a storage implementation detail.
+// MBTiles conversion. CacheStatus makes the hand-off to the GeoData tile store
+// observable without exposing an object key or a storage implementation detail.
 type ConversionArtifactView struct {
 	ID           string    `json:"id"`
 	SourceName   string    `json:"sourceName"`
@@ -120,8 +120,8 @@ type ConversionArtifact struct {
 	Bounds, VectorLayers               json.RawMessage
 }
 
-// CacheArtifact is an internal cache-warming work item. Object keys remain
-// private: only the WebGIS-local warmer receives them.
+// CacheArtifact is an internal materialization work item. Object keys remain
+// private: only the GeoData tile-store worker receives them.
 type CacheArtifact struct {
 	ID, OutputObjectKey, DataType, SourceFormat string
 }
@@ -425,9 +425,12 @@ WHERE j.id = $1 AND j.status = 'succeeded' AND j.output_object_key IS NOT NULL`,
 }
 
 // ClaimCacheArtifact reserves one converted MBTiles artifact for materializing
-// in TileServer's local PVC. A separate cache status keeps this slow I/O out of
-// release publication.
-func (s *Store) ClaimCacheArtifact(ctx context.Context) (*CacheArtifact, error) {
+// in GeoData's local serving volume. A separate cache status keeps this slow
+// I/O out of release publication.
+func (s *Store) ClaimCacheArtifact(ctx context.Context, servingBackend string) (*CacheArtifact, error) {
+	if servingBackend != "tileserver_cache" && servingBackend != "geodata_mbtiles" {
+		return nil, errors.New("invalid tile serving backend")
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -439,13 +442,14 @@ SELECT j.id, j.output_object_key, r.data_type, r.source_format
 FROM conversion_jobs j
 JOIN raw_uploads r ON r.id = j.raw_upload_id
 WHERE j.status='succeeded' AND j.output_object_key IS NOT NULL
+	AND COALESCE(j.tile_serving_backend, 'tileserver_cache')=$1
   AND (
 	 j.tile_cache_status='pending' OR
 	 (j.tile_cache_status='failed' AND COALESCE(j.tile_cache_last_attempt_at, TO_TIMESTAMP(0)) < NOW() - INTERVAL '5 minutes')
   )
 ORDER BY CASE j.tile_cache_status WHEN 'pending' THEN 0 ELSE 1 END, j.finished_at NULLS LAST, j.created_at
 FOR UPDATE SKIP LOCKED
-LIMIT 1`).Scan(&artifact.ID, &artifact.OutputObjectKey, &artifact.DataType, &artifact.SourceFormat)
+LIMIT 1`, servingBackend).Scan(&artifact.ID, &artifact.OutputObjectKey, &artifact.DataType, &artifact.SourceFormat)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, tx.Commit(ctx)
 	}
@@ -461,12 +465,15 @@ LIMIT 1`).Scan(&artifact.ID, &artifact.OutputObjectKey, &artifact.DataType, &art
 	return artifact, nil
 }
 
-func (s *Store) CompleteArtifactCache(ctx context.Context, artifact CacheArtifact, tile ReleaseArtifact) error {
+func (s *Store) CompleteArtifactCache(ctx context.Context, artifact CacheArtifact, tile ReleaseArtifact, servingBackend string) error {
+	if servingBackend != "tileserver_cache" && servingBackend != "geodata_mbtiles" {
+		return errors.New("invalid tile serving backend")
+	}
 	_, err := s.pool.Exec(ctx, `
 UPDATE conversion_jobs
-SET tile_cache_status='ready', tile_server_dataset=$2, tile_format=$3,
-    tile_bounds=$4::jsonb, tile_vector_layers=$5::jsonb, tile_cache_warmed_at=NOW(), tile_cache_failure=NULL
-WHERE id=$1 AND status='succeeded' AND tile_cache_status='warming'`, artifact.ID, tile.TileServerDataset, tile.TileFormat, defaultJSON(tile.Bounds, "[-180,-85.051129,180,85.051129]"), defaultJSON(tile.VectorLayers, "[]"))
+SET tile_cache_status='ready', tile_serving_backend=$2, tile_server_dataset=$3, tile_format=$4,
+    tile_bounds=$5::jsonb, tile_vector_layers=$6::jsonb, tile_cache_warmed_at=NOW(), tile_cache_failure=NULL
+WHERE id=$1 AND status='succeeded' AND tile_cache_status='warming'`, artifact.ID, servingBackend, tile.TileServerDataset, tile.TileFormat, defaultJSON(tile.Bounds, "[-180,-85.051129,180,85.051129]"), defaultJSON(tile.VectorLayers, "[]"))
 	return err
 }
 
@@ -487,9 +494,10 @@ func (s *Store) CreateRelease(ctx context.Context, release MapRelease, artifactI
 	for _, id := range artifactIDs {
 		result, err := tx.Exec(ctx, `
 INSERT INTO map_release_artifacts (release_id,artifact_id,serving_backend,tile_server_dataset,warm_status,warmed_at,tile_format,bounds,min_zoom,max_zoom,vector_layers)
-SELECT $1,id,'tileserver_cache',tile_server_dataset,'ready',tile_cache_warmed_at,tile_format,tile_bounds,min_zoom,max_zoom,tile_vector_layers
+SELECT $1,id,'geodata_mbtiles',NULL,'ready',tile_cache_warmed_at,tile_format,tile_bounds,min_zoom,max_zoom,tile_vector_layers
 FROM conversion_jobs
-WHERE id=$2 AND status='succeeded' AND output_object_key IS NOT NULL AND tile_cache_status='ready'`, release.ID, id)
+WHERE id=$2 AND status='succeeded' AND output_object_key IS NOT NULL
+  AND tile_cache_status='ready' AND tile_serving_backend='geodata_mbtiles'`, release.ID, id)
 		if err != nil {
 			return err
 		}
@@ -565,13 +573,12 @@ func (s *Store) StartReleasePublish(ctx context.Context, id string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	// Newly-created drafts only reference cache-ready conversion artifacts, so
-	// publication is a metadata transition. Preserve the asynchronous path for
-	// drafts created before cache readiness existed; the warmer will complete
-	// those without making their tiles visible prematurely.
+	// Newly-created drafts only reference MBTiles already present on GeoData's
+	// serving volume, so publication is a metadata transition. Preserve the
+	// asynchronous path for drafts created before cache readiness existed.
 	var cacheReady bool
 	err = tx.QueryRow(ctx, `
-SELECT COALESCE(bool_and(serving_backend='tileserver_cache' AND warm_status='ready'), false)
+SELECT COALESCE(bool_and(serving_backend='geodata_mbtiles' AND warm_status='ready'), false)
 FROM map_release_artifacts
 WHERE release_id=$1`, id).Scan(&cacheReady)
 	if err != nil {

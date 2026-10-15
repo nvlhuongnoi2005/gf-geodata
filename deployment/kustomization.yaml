@@ -6,5 +6,6 @@ resources:
   - frontend
   - upload-api
   - worker
+  - mbtiles-store
   - tile-gateway
   - storage

@@ -16,6 +16,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: geodata-worker
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: geodata-mbtiles-store-warmer
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: geodata-tile-gateway
