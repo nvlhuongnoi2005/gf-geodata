@@ -449,7 +449,18 @@ func (s *server) createRelease(w http.ResponseWriter, r *http.Request) {
 	// restricted until an administrator makes it public or grants recipients.
 	release := catalog.MapRelease{ID: id, Name: strings.TrimSpace(request.Name), MapCode: mapCode, Version: request.Version, Slug: slug, Description: strings.TrimSpace(request.Description), ReleaseNotes: strings.TrimSpace(request.ReleaseNotes), Visibility: "restricted", Status: "draft", CreatedBy: actor, CreatedAt: time.Now().UTC()}
 	if err = s.store.CreateRelease(ctx, release, request.ArtifactIDs); err != nil {
-		http.Error(w, "could not create release", 409)
+		if errors.Is(err, catalog.ErrConversionJobNotActive) {
+			http.Error(w, "the selected MBTiles output is not ready in TileServer", http.StatusConflict)
+			return
+		}
+		// Keep database implementation details out of the browser, but retain
+		// the complete error in the server log for an operator to diagnose.
+		slog.Error("create map release", "map_code", mapCode, "version", request.Version, "artifact_count", len(request.ArtifactIDs), "error", err)
+		if strings.Contains(err.Error(), "duplicate key") {
+			http.Error(w, "a release with this map code and version already exists", http.StatusConflict)
+			return
+		}
+		http.Error(w, "could not save the draft release", http.StatusServiceUnavailable)
 		return
 	}
 	release.ArtifactIDs = request.ArtifactIDs

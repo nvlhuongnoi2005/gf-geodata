@@ -134,7 +134,10 @@ export function ReleasesPage() {
         ...options,
         headers: { Authorization: `Bearer ${accessToken}`, ...options.headers },
       });
-      if (!response.ok) throw new Error(message);
+      if (!response.ok) {
+        const detail = (await response.text()).trim();
+        throw new Error(detail || message);
+      }
       await load();
       return true;
     } catch (requestError) {
