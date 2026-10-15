@@ -108,6 +108,7 @@ type ConversionArtifactView struct {
 	ID           string    `json:"id"`
 	SourceName   string    `json:"sourceName"`
 	OutputFormat string    `json:"outputFormat"`
+	CacheStatus  string    `json:"cacheStatus"`
 	MinZoom      int       `json:"minZoom"`
 	MaxZoom      int       `json:"maxZoom"`
 	CreatedAt    time.Time `json:"createdAt"`
@@ -115,7 +116,15 @@ type ConversionArtifactView struct {
 
 type ConversionArtifact struct {
 	ConversionArtifactView
-	OutputObjectKey string
+	OutputObjectKey, TileServerDataset string
+	TileFormat                         string
+	Bounds, VectorLayers               json.RawMessage
+}
+
+// CacheArtifact is an internal cache-warming work item. Object keys remain
+// private: only the WebGIS-local warmer receives them.
+type CacheArtifact struct {
+	ID, OutputObjectKey string
 }
 
 type MapRelease struct {
@@ -377,10 +386,10 @@ LIMIT $1`, limit)
 
 func (s *Store) ListConversionArtifacts(ctx context.Context, limit int) ([]ConversionArtifactView, error) {
 	rows, err := s.pool.Query(ctx, `
-SELECT j.id, r.display_name, 'mbtiles', j.min_zoom, j.max_zoom, j.finished_at
+	SELECT j.id, r.display_name, 'mbtiles', COALESCE(j.tile_cache_status,'pending'), j.min_zoom, j.max_zoom, j.finished_at
 FROM conversion_jobs j
 JOIN raw_uploads r ON r.id = j.raw_upload_id
-WHERE j.status = 'succeeded' AND j.output_object_key IS NOT NULL
+	WHERE j.status = 'succeeded' AND j.output_object_key IS NOT NULL AND COALESCE(j.tile_cache_status,'pending') = 'ready'
 ORDER BY j.finished_at DESC
 LIMIT $1`, limit)
 	if err != nil {
@@ -390,7 +399,7 @@ LIMIT $1`, limit)
 	items := make([]ConversionArtifactView, 0)
 	for rows.Next() {
 		var item ConversionArtifactView
-		if err := rows.Scan(&item.ID, &item.SourceName, &item.OutputFormat, &item.MinZoom, &item.MaxZoom, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.SourceName, &item.OutputFormat, &item.CacheStatus, &item.MinZoom, &item.MaxZoom, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -401,17 +410,65 @@ LIMIT $1`, limit)
 func (s *Store) ConversionArtifact(ctx context.Context, id string) (ConversionArtifact, error) {
 	var artifact ConversionArtifact
 	err := s.pool.QueryRow(ctx, `
-SELECT j.id, r.display_name, 'mbtiles', j.min_zoom, j.max_zoom, j.finished_at, j.output_object_key
+SELECT j.id, r.display_name, 'mbtiles', COALESCE(j.tile_cache_status,'pending'), j.min_zoom, j.max_zoom, j.finished_at, j.output_object_key,
+       COALESCE(j.tile_server_dataset,''), COALESCE(j.tile_format,''), COALESCE(j.tile_bounds::text,'[]'), COALESCE(j.tile_vector_layers::text,'[]')
 FROM conversion_jobs j
 JOIN raw_uploads r ON r.id = j.raw_upload_id
 WHERE j.id = $1 AND j.status = 'succeeded' AND j.output_object_key IS NOT NULL`, id).Scan(
-		&artifact.ID, &artifact.SourceName, &artifact.OutputFormat,
+		&artifact.ID, &artifact.SourceName, &artifact.OutputFormat, &artifact.CacheStatus,
 		&artifact.MinZoom, &artifact.MaxZoom, &artifact.CreatedAt, &artifact.OutputObjectKey,
+		&artifact.TileServerDataset, &artifact.TileFormat, &artifact.Bounds, &artifact.VectorLayers,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ConversionArtifact{}, ErrConversionJobNotFound
 	}
 	return artifact, err
+}
+
+// ClaimCacheArtifact reserves one converted MBTiles artifact for materializing
+// in TileServer's local PVC. A separate cache status keeps this slow I/O out of
+// release publication.
+func (s *Store) ClaimCacheArtifact(ctx context.Context) (*CacheArtifact, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	artifact := &CacheArtifact{}
+	err = tx.QueryRow(ctx, `
+SELECT id, output_object_key
+FROM conversion_jobs
+WHERE status='succeeded' AND output_object_key IS NOT NULL AND tile_cache_status='pending'
+ORDER BY finished_at NULLS LAST, created_at
+FOR UPDATE SKIP LOCKED
+LIMIT 1`).Scan(&artifact.ID, &artifact.OutputObjectKey)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, tx.Commit(ctx)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE conversion_jobs SET tile_cache_status='warming',tile_cache_failure=NULL WHERE id=$1`, artifact.ID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return artifact, nil
+}
+
+func (s *Store) CompleteArtifactCache(ctx context.Context, artifact CacheArtifact, tile ReleaseArtifact) error {
+	_, err := s.pool.Exec(ctx, `
+UPDATE conversion_jobs
+SET tile_cache_status='ready', tile_server_dataset=$2, tile_format=$3,
+    tile_bounds=$4::jsonb, tile_vector_layers=$5::jsonb, tile_cache_warmed_at=NOW(), tile_cache_failure=NULL
+WHERE id=$1 AND status='succeeded' AND tile_cache_status='warming'`, artifact.ID, tile.TileServerDataset, tile.TileFormat, defaultJSON(tile.Bounds, "[-180,-85.051129,180,85.051129]"), defaultJSON(tile.VectorLayers, "[]"))
+	return err
+}
+
+func (s *Store) FailArtifactCache(ctx context.Context, artifactID, message string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE conversion_jobs SET tile_cache_status='failed',tile_cache_failure=LEFT($2,4000) WHERE id=$1 AND tile_cache_status='warming'`, artifactID, message)
+	return err
 }
 
 func (s *Store) CreateRelease(ctx context.Context, release MapRelease, artifactIDs []string) error {
@@ -424,7 +481,11 @@ func (s *Store) CreateRelease(ctx context.Context, release MapRelease, artifactI
 		return err
 	}
 	for _, id := range artifactIDs {
-		result, err := tx.Exec(ctx, `INSERT INTO map_release_artifacts (release_id,artifact_id) SELECT $1,id FROM conversion_jobs WHERE id=$2 AND status='succeeded' AND output_object_key IS NOT NULL`, release.ID, id)
+		result, err := tx.Exec(ctx, `
+INSERT INTO map_release_artifacts (release_id,artifact_id,serving_backend,tile_server_dataset,warm_status,warmed_at,tile_format,bounds,min_zoom,max_zoom,vector_layers)
+SELECT $1,id,'tileserver_cache',tile_server_dataset,'ready',tile_cache_warmed_at,tile_format,tile_bounds,min_zoom,max_zoom,tile_vector_layers
+FROM conversion_jobs
+WHERE id=$2 AND status='succeeded' AND output_object_key IS NOT NULL AND tile_cache_status='ready'`, release.ID, id)
 		if err != nil {
 			return err
 		}
@@ -500,15 +561,34 @@ func (s *Store) StartReleasePublish(ctx context.Context, id string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	result, err := tx.Exec(ctx, `UPDATE map_releases SET status='publishing',failure_message=NULL,updated_at=NOW() WHERE id=$1 AND status='draft'`, id)
+	// Newly-created drafts only reference cache-ready conversion artifacts, so
+	// publication is a metadata transition. Preserve the asynchronous path for
+	// drafts created before cache readiness existed; the warmer will complete
+	// those without making their tiles visible prematurely.
+	var cacheReady bool
+	err = tx.QueryRow(ctx, `
+SELECT COALESCE(bool_and(serving_backend='tileserver_cache' AND warm_status='ready'), false)
+FROM map_release_artifacts
+WHERE release_id=$1`, id).Scan(&cacheReady)
+	if err != nil {
+		return err
+	}
+	status := "publishing"
+	if cacheReady {
+		status = "published"
+	}
+	result, err := tx.Exec(ctx, `
+UPDATE map_releases
+SET status=$2,
+    published_at=CASE WHEN $2='published' THEN NOW() ELSE NULL END,
+    failure_message=NULL,
+    updated_at=NOW()
+WHERE id=$1 AND status='draft'`, id, status)
 	if err != nil {
 		return err
 	}
 	if result.RowsAffected() != 1 {
 		return ErrConversionJobNotActive
-	}
-	if _, err := tx.Exec(ctx, `UPDATE map_release_artifacts SET warm_status='pending', warmed_at=NULL WHERE release_id=$1`, id); err != nil {
-		return err
 	}
 	return tx.Commit(ctx)
 }

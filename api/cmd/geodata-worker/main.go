@@ -4,7 +4,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -85,7 +88,11 @@ func main() {
 	for {
 		worked := false
 		if mode == "tileserver-cache-warmer" {
-			worked = app.publishOne(ctx)
+			worked = app.warmOne(ctx)
+			if !worked {
+				// Compatibility path for drafts created before artifact warming.
+				worked = app.publishOne(ctx)
+			}
 		} else {
 			worked = app.processOne(ctx)
 		}
@@ -98,6 +105,34 @@ func main() {
 			}
 		}
 	}
+}
+
+func (w *worker) warmOne(parent context.Context) bool {
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	artifact, err := w.store.ClaimCacheArtifact(ctx)
+	cancel()
+	if err != nil {
+		slog.Error("claim artifact cache warm", "error", err)
+		return false
+	}
+	if artifact == nil {
+		return false
+	}
+	warmed, err := w.warmArtifact(parent, artifact.ID, artifact.OutputObjectKey)
+	if err != nil {
+		slog.Error("warm artifact cache failed", "artifact_id", artifact.ID, "error", err)
+		failCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
+		_ = w.store.FailArtifactCache(failCtx, artifact.ID, err.Error())
+		stop()
+		return true
+	}
+	completeCtx, stop := context.WithTimeout(parent, 20*time.Second)
+	err = w.store.CompleteArtifactCache(completeCtx, *artifact, warmed)
+	stop()
+	if err != nil {
+		slog.Error("record warmed artifact", "artifact_id", artifact.ID, "error", err)
+	}
+	return true
 }
 
 func openCatalog(ctx context.Context) *catalog.Store {
@@ -209,58 +244,108 @@ func (w *worker) publishOne(parent context.Context) bool {
 }
 
 func (w *worker) publishArtifact(ctx context.Context, releaseID string, artifact *catalog.ReleaseArtifact) error {
-	if err := os.MkdirAll(w.tileCacheRoot, 0o750); err != nil {
-		return fmt.Errorf("create TileServer cache root: %w", err)
+	warmed, err := w.warmArtifact(ctx, artifact.ArtifactID, artifact.OutputObjectKey)
+	if err != nil {
+		return err
 	}
-	dataset := "geodata-" + strings.ReplaceAll(artifact.ArtifactID, "-", "")
+	warmed.ReleaseID = releaseID
+	storeCtx, stop := context.WithTimeout(ctx, 20*time.Second)
+	defer stop()
+	return w.store.CompleteReleasePublish(storeCtx, releaseID, warmed)
+}
+
+func (w *worker) warmArtifact(ctx context.Context, artifactID, outputObjectKey string) (catalog.ReleaseArtifact, error) {
+	if err := os.MkdirAll(w.tileCacheRoot, 0o750); err != nil {
+		return catalog.ReleaseArtifact{}, fmt.Errorf("create TileServer cache root: %w", err)
+	}
+	dataset := "geodata-" + strings.ReplaceAll(artifactID, "-", "")
 	target := filepath.Join(w.tileCacheRoot, dataset+".mbtiles")
 	file, err := os.CreateTemp(w.tileCacheRoot, "."+dataset+"-*.mbtiles")
 	if err != nil {
-		return fmt.Errorf("create temporary TileServer artifact: %w", err)
+		return catalog.ReleaseArtifact{}, fmt.Errorf("create temporary TileServer artifact: %w", err)
 	}
 	temporary := file.Name()
 	defer os.Remove(temporary)
 	if err := file.Chmod(0o640); err != nil {
 		_ = file.Close()
-		return err
+		return catalog.ReleaseArtifact{}, err
 	}
-	_, downloadErr := w.downloader.Download(ctx, file, &s3.GetObjectInput{Bucket: aws.String(w.derivedBucket), Key: aws.String(artifact.OutputObjectKey)})
+	_, downloadErr := w.downloader.Download(ctx, file, &s3.GetObjectInput{Bucket: aws.String(w.derivedBucket), Key: aws.String(outputObjectKey)})
 	if syncErr := file.Sync(); syncErr != nil && downloadErr == nil {
 		downloadErr = syncErr
 	}
 	closeErr := file.Close()
 	if downloadErr != nil {
-		return fmt.Errorf("download derived artifact into TileServer cache: %w", downloadErr)
+		return catalog.ReleaseArtifact{}, fmt.Errorf("download derived artifact into TileServer cache: %w", downloadErr)
 	}
 	if closeErr != nil {
-		return closeErr
+		return catalog.ReleaseArtifact{}, closeErr
 	}
 	metadata, err := mbtiles.ReadMetadata(ctx, temporary)
 	if err != nil {
-		return fmt.Errorf("read cached MBTiles metadata: %w", err)
+		return catalog.ReleaseArtifact{}, fmt.Errorf("read cached MBTiles metadata: %w", err)
 	}
 	bounds, err := json.Marshal(metadata.Bounds.Values())
 	if err != nil {
-		return fmt.Errorf("encode tile bounds: %w", err)
+		return catalog.ReleaseArtifact{}, fmt.Errorf("encode tile bounds: %w", err)
 	}
 	vectorLayers, err := json.Marshal(metadata.VectorLayers)
 	if err != nil {
-		return fmt.Errorf("encode vector layer metadata: %w", err)
+		return catalog.ReleaseArtifact{}, fmt.Errorf("encode vector layer metadata: %w", err)
 	}
 	// Rename on the shared PVC is atomic. TileServer only ever observes a
 	// complete SQLite file, never the temporary download.
 	if err := os.Rename(temporary, target); err != nil {
-		return fmt.Errorf("activate TileServer artifact: %w", err)
+		return catalog.ReleaseArtifact{}, fmt.Errorf("activate TileServer artifact: %w", err)
+	}
+	if err := w.restartTileServer(ctx); err != nil {
+		return catalog.ReleaseArtifact{}, err
 	}
 	if err := w.waitForTileServer(ctx, dataset); err != nil {
+		return catalog.ReleaseArtifact{}, err
+	}
+	return catalog.ReleaseArtifact{ArtifactID: artifactID, TileServerDataset: dataset, TileFormat: metadata.Format, MinZoom: metadata.MinZoom, MaxZoom: metadata.MaxZoom, Bounds: bounds, VectorLayers: vectorLayers}, nil
+}
+
+// The WebGIS TileServer image indexes MBTiles at process start. A narrowly
+// scoped Kubernetes Role lets the warmer roll just that deployment after an
+// atomic cache update; waitForTileServer below confirms the new catalog.
+func (w *worker) restartTileServer(ctx context.Context) error {
+	if strings.EqualFold(environmentOr("TILE_SERVER_RESTART_ENABLED", "false"), "false") {
+		return nil
+	}
+	token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	if err != nil {
+		return fmt.Errorf("read TileServer restart token: %w", err)
+	}
+	certificate, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+	if err != nil {
+		return fmt.Errorf("read Kubernetes service CA: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(certificate) {
+		return errors.New("parse Kubernetes service CA")
+	}
+	payload := []byte(`{"spec":{"template":{"metadata":{"annotations":{"geodata.nvlhuongnoi2005/cache-warmed-at":"` + time.Now().UTC().Format(time.RFC3339Nano) + `"}}}}}`)
+	namespace := environmentOr("TILE_SERVER_NAMESPACE", "webgis")
+	name := environmentOr("TILE_SERVER_DEPLOYMENT", "tile-server")
+	endpoint := "https://kubernetes.default.svc/apis/apps/v1/namespaces/" + namespace + "/deployments/" + name
+	request, err := http.NewRequestWithContext(ctx, http.MethodPatch, endpoint, bytes.NewReader(payload))
+	if err != nil {
 		return err
 	}
-	artifact.TileServerDataset, artifact.TileFormat = dataset, metadata.Format
-	artifact.MinZoom, artifact.MaxZoom = metadata.MinZoom, metadata.MaxZoom
-	artifact.Bounds, artifact.VectorLayers = bounds, vectorLayers
-	storeCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-	defer stop()
-	return w.store.CompleteReleasePublish(storeCtx, releaseID, *artifact)
+	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
+	request.Header.Set("Content-Type", "application/merge-patch+json")
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}}
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("request TileServer restart: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("request TileServer restart: %s", response.Status)
+	}
+	return nil
 }
 
 // waitForTileServer is both the cache warm verification and the registration

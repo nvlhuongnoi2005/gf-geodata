@@ -234,12 +234,14 @@ reduce Tilemaker's actual peak-memory requirement.
 ## Register artifacts and warm the existing WebGIS TileServer
 
 Publishing no longer expands one MBTiles file into a large number of S3 tile
-objects. The normal conversion worker only writes the immutable MBTiles source
-to `geodata-derived`. The separate cache warmer runs in namespace `webgis`,
-mounts the existing `tile-data` PVC under its `mbtiles` directory, downloads one MBTiles file, atomically
-activates it, and waits for `tile-server` to expose `/datas/{dataset}.json`.
-The GeoData tile gateway preserves authentication and authorization while
-proxying the fast local TileServer read.
+objects. After conversion the normal worker writes the immutable source to
+`geodata-derived`; then the separate cache warmer in namespace `webgis` mounts
+the existing `tile-data` PVC under its `mbtiles/geodata` directory, downloads
+the MBTiles once, activates it atomically, rolls only `webgis/tile-server`, and
+waits for `/datas/{dataset}.json`. The warmer records the artifact as `ready`.
+Only ready artifacts can be selected for a draft, so publishing is a fast
+metadata transition. The GeoData tile gateway preserves authentication and
+authorization while proxying the fast local TileServer read.
 
 Create namespace-local copies of the existing catalog and worker S3 Secrets
 (they are namespace-scoped), then apply the separate WebGIS-owned workload:
@@ -253,6 +255,12 @@ kubectl -n tile-server rollout restart deployment/geodata-worker,deployment/geod
 kubectl -n tile-server rollout status deployment/geodata-worker --timeout=5m
 kubectl -n tile-server rollout status deployment/geodata-tile-gateway --timeout=5m
 ```
+
+The cache warmer's service account can only `get` and `patch` the one
+`webgis/tile-server` Deployment; the patch changes a pod-template annotation
+after a new MBTiles file is atomically placed, forcing TileServer to rebuild
+its otherwise startup-only catalog. Apply migration `009_artifact_cache_ready.sql`
+before rolling these workloads.
 
 On the current one-node WebGIS setup, `tile-data` is a `ReadWriteOnce` PVC and
 the TileServer is read-only while the warmer writes. This is sufficient for the
