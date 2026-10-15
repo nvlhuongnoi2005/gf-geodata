@@ -300,7 +300,7 @@ export function ReleasesPage() {
                 <TableCell align="right">
                   <Stack direction="row" spacing={0.5} sx={{ justifyContent: "flex-end" }}>
                     {release.status === "draft" && (
-                      <Button size="small" onClick={() => void publish(release.id)}>
+                      <Button size="small" disabled={saving} onClick={() => void publish(release.id)}>
                         {t("release.publish")}
                       </Button>
                     )}

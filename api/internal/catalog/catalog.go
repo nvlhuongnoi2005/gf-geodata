@@ -573,6 +573,25 @@ func (s *Store) StartReleasePublish(ctx context.Context, id string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Lock the release first. Besides eliminating a race between two browser
+	// clicks, this makes publishing idempotent: a retry after the first request
+	// has started or completed is safe and lets the UI reload the true state.
+	var currentStatus string
+	err = tx.QueryRow(ctx, `SELECT status FROM map_releases WHERE id=$1 FOR UPDATE`, id).Scan(&currentStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrConversionJobNotFound
+	}
+	if err != nil {
+		return err
+	}
+	switch currentStatus {
+	case "published", "publishing":
+		return tx.Commit(ctx)
+	case "draft":
+		// Continue below.
+	default:
+		return ErrConversionJobNotActive
+	}
 	// Newly-created drafts only reference MBTiles already present on GeoData's
 	// serving volume, so publication is a metadata transition. Preserve the
 	// asynchronous path for drafts created before cache readiness existed.
