@@ -26,8 +26,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/catalog"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/directory"
-	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/mbtiles"
-	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/tilegateway"
 )
 
 type uploadListResponse struct {
@@ -68,18 +66,6 @@ type createAccessGrantRequest struct {
 	ReleaseID     string `json:"releaseId"`
 	Scope         string `json:"scope"`
 	Note          string `json:"note"`
-}
-
-type tileJSONResponse struct {
-	TileJSON     string                `json:"tilejson"`
-	Name         string                `json:"name"`
-	Scheme       string                `json:"scheme"`
-	Format       string                `json:"format"`
-	Tiles        []string              `json:"tiles"`
-	Bounds       []float64             `json:"bounds"`
-	MinZoom      int                   `json:"minzoom"`
-	MaxZoom      int                   `json:"maxzoom"`
-	VectorLayers []mbtiles.VectorLayer `json:"vector_layers,omitempty"`
 }
 
 type createConversionJobRequest struct {
@@ -192,14 +178,10 @@ func main() {
 		u.PartSize = 64 * 1024 * 1024
 		u.Concurrency = 2
 	})
-	tileCache, err := tilegateway.NewCache(required("TILE_CACHE_DIR"), required("S3_DERIVED_BUCKET"), objectStore)
-	if err != nil {
-		log.Fatalf("configure tile cache: %v", err)
-	}
 	app := &server{
 		keys: keys, issuer: issuer, audience: audience, adminRole: roleName,
 		bucket: required("S3_BUCKET"), derivedBucket: required("S3_DERIVED_BUCKET"), maxUploadBytes: maxBytes, uploader: uploader,
-		objectStore: objectStore, store: store, tileCache: tileCache, authJWKSURL: jwksURL,
+		objectStore: objectStore, store: store, authJWKSURL: jwksURL,
 		tileGatewayHealthURL: strings.TrimSpace(os.Getenv("TILE_GATEWAY_HEALTH_URL")),
 		healthClient:         &http.Client{Timeout: 3 * time.Second},
 		uploadSlots:          make(chan struct{}, 2),
@@ -217,8 +199,6 @@ func main() {
 	mux.Handle("POST /api/geodata/v1/jobs/{jobID}/cancel", app.requireAdmin(http.HandlerFunc(app.cancelConversionJob)))
 	mux.Handle("DELETE /api/geodata/v1/jobs/{jobID}", app.requireAdmin(http.HandlerFunc(app.deleteConversionJob)))
 	mux.Handle("GET /api/geodata/v1/artifacts", app.requireAdmin(http.HandlerFunc(app.listConversionArtifacts)))
-	mux.Handle("GET /api/geodata/v1/artifacts/{artifactID}/tilejson", app.requireAdmin(http.HandlerFunc(app.artifactTileJSON)))
-	mux.Handle("GET /api/geodata/v1/artifacts/{artifactID}/tiles/{z}/{x}/{y}", app.requireAdmin(http.HandlerFunc(app.artifactTile)))
 	mux.Handle("GET /api/geodata/v1/releases", app.requireAdmin(http.HandlerFunc(app.listReleases)))
 	mux.Handle("POST /api/geodata/v1/releases", app.requireAdmin(http.HandlerFunc(app.createRelease)))
 	mux.Handle("POST /api/geodata/v1/releases/{releaseID}/publish", app.requireAdmin(http.HandlerFunc(app.publishRelease)))
@@ -275,7 +255,6 @@ type server struct {
 	uploader                                           *manager.Uploader
 	objectStore                                        *s3.Client
 	store                                              *catalog.Store
-	tileCache                                          *tilegateway.Cache
 	authJWKSURL, tileGatewayHealthURL                  string
 	healthClient                                       *http.Client
 	uploadSlots                                        chan struct{}
@@ -404,49 +383,6 @@ func (s *server) listConversionArtifacts(w http.ResponseWriter, r *http.Request)
 	_ = json.NewEncoder(w).Encode(conversionArtifactListResponse{Items: items})
 }
 
-func (s *server) artifactTileJSON(w http.ResponseWriter, r *http.Request) {
-	artifact, _, metadata, ok := s.loadPreviewArtifact(w, r)
-	if !ok {
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(tileJSONResponse{
-		TileJSON: "3.0.0", Name: artifact.SourceName, Scheme: "xyz", Format: metadata.Format,
-		Tiles:  []string{"/api/geodata/v1/artifacts/" + artifact.ID + "/tiles/{z}/{x}/{y}"},
-		Bounds: metadata.Bounds.Values(), MinZoom: metadata.MinZoom, MaxZoom: metadata.MaxZoom,
-		VectorLayers: metadata.VectorLayers,
-	})
-}
-
-func (s *server) artifactTile(w http.ResponseWriter, r *http.Request) {
-	_, path, metadata, ok := s.loadPreviewArtifact(w, r)
-	if !ok {
-		return
-	}
-	z, zErr := strconv.Atoi(r.PathValue("z"))
-	x, xErr := strconv.Atoi(r.PathValue("x"))
-	y, yErr := strconv.Atoi(r.PathValue("y"))
-	if zErr != nil || xErr != nil || yErr != nil {
-		http.Error(w, "invalid tile coordinates", http.StatusBadRequest)
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-	tile, err := mbtiles.ReadTile(ctx, path, z, x, y)
-	if errors.Is(err, mbtiles.ErrTileNotFound) {
-		http.NotFound(w, r)
-		return
-	}
-	if err != nil {
-		slog.Error("read preview tile", "error", err)
-		http.Error(w, "could not read map tile", http.StatusServiceUnavailable)
-		return
-	}
-	w.Header().Set("Content-Type", tileContentType(metadata.Format))
-	w.Header().Set("Cache-Control", "private, max-age=300")
-	_, _ = w.Write(tile)
-}
-
 func (s *server) listReleases(w http.ResponseWriter, r *http.Request) {
 	ctx, c := context.WithTimeout(r.Context(), 10*time.Second)
 	defer c()
@@ -515,6 +451,7 @@ func (s *server) createRelease(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not create release", 409)
 		return
 	}
+	release.ArtifactIDs = request.ArtifactIDs
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(201)
 	_ = json.NewEncoder(w).Encode(release)
@@ -767,52 +704,6 @@ func releaseSlug(mapCode, version string) string {
 	return mapCode + "-v" + strings.ReplaceAll(version, ".", "-")
 }
 
-func (s *server) loadPreviewArtifact(w http.ResponseWriter, r *http.Request) (catalog.ConversionArtifact, string, mbtiles.Metadata, bool) {
-	id := r.PathValue("artifactID")
-	if !isUUID(id) {
-		http.Error(w, "invalid converted data identifier", http.StatusBadRequest)
-		return catalog.ConversionArtifact{}, "", mbtiles.Metadata{}, false
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-	defer cancel()
-	artifact, err := s.store.ConversionArtifact(ctx, id)
-	if errors.Is(err, catalog.ErrConversionJobNotFound) {
-		http.NotFound(w, r)
-		return catalog.ConversionArtifact{}, "", mbtiles.Metadata{}, false
-	}
-	if err != nil {
-		slog.Error("load converted artifact", "artifact_id", id, "error", err)
-		http.Error(w, "could not load converted data", http.StatusServiceUnavailable)
-		return catalog.ConversionArtifact{}, "", mbtiles.Metadata{}, false
-	}
-	path, err := s.tileCache.Ensure(ctx, artifact.ID, artifact.OutputObjectKey)
-	if err != nil {
-		slog.Error("cache converted artifact", "artifact_id", id, "error", err)
-		http.Error(w, "could not prepare map preview", http.StatusBadGateway)
-		return catalog.ConversionArtifact{}, "", mbtiles.Metadata{}, false
-	}
-	metadata, err := mbtiles.ReadMetadata(ctx, path)
-	if err != nil {
-		slog.Error("read converted artifact metadata", "artifact_id", id, "error", err)
-		http.Error(w, "converted data is not a valid MBTiles file", http.StatusUnprocessableEntity)
-		return catalog.ConversionArtifact{}, "", mbtiles.Metadata{}, false
-	}
-	return artifact, path, metadata, true
-}
-
-func tileContentType(format string) string {
-	switch strings.ToLower(format) {
-	case "pbf", "mvt":
-		return "application/vnd.mapbox-vector-tile"
-	case "jpg", "jpeg":
-		return "image/jpeg"
-	case "webp":
-		return "image/webp"
-	default:
-		return "image/png"
-	}
-}
-
 func (s *server) checkHTTPService(parent context.Context, endpoint string) serviceState {
 	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 	defer cancel()
@@ -1052,9 +943,6 @@ func (s *server) deleteConversionJob(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "could not delete conversion job", http.StatusServiceUnavailable)
 		}
 		return
-	}
-	if err := s.tileCache.Remove(id); err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("remove converted artifact from tile cache", "job_id", id, "error", err)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

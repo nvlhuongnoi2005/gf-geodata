@@ -39,8 +39,6 @@ spec:
               value: geodata-raw
             - name: S3_DERIVED_BUCKET
               value: geodata-derived
-            - name: TILE_CACHE_DIR
-              value: /var/cache/geodata/tiles
             - name: S3_REGION
               value: us-east-1
             - name: MAX_UPLOAD_BYTES
@@ -101,9 +99,6 @@ spec:
                   name: geodata-webgis-directory
                   key: database-url
                   optional: true
-          volumeMounts:
-            - name: tile-cache
-              mountPath: /var/cache/geodata/tiles
           readinessProbe:
             httpGet:
               path: /healthz
@@ -127,10 +122,6 @@ spec:
             runAsUser: 10001
             capabilities:
               drop: [ALL]
-      volumes:
-        - name: tile-cache
-          emptyDir:
-            sizeLimit: 20Gi
 ---
 apiVersion: v1
 kind: Service

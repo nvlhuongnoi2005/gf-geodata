@@ -184,14 +184,16 @@ kubectl -n storage rollout status statefulset/seaweedfs --timeout=10m
 kubectl -n storage wait --for=condition=complete job/geodata-bucket-bootstrap --timeout=5m
 kubectl -n tile-server rollout restart deployment/geodata-upload
 kubectl -n tile-server rollout restart deployment/geodata-worker
+kubectl -n tile-server rollout restart deployment/geodata-tile-gateway
 kubectl -n tile-server rollout restart deployment/geodata-frontend
 kubectl -n tile-server rollout status deployment/geodata-upload --timeout=5m
 kubectl -n tile-server rollout status deployment/geodata-worker --timeout=5m
+kubectl -n tile-server rollout status deployment/geodata-tile-gateway --timeout=5m
 kubectl -n tile-server rollout status deployment/geodata-frontend --timeout=5m
 ```
 
 Set your GHCR `ghcr-pull` Secret in `tile-server` before rollout. GitHub Actions
-publishes `geodata-upload:dev` and `geodata-worker:dev` when `api/**` changes. The upload API enforces a
+publishes `geodata-upload:dev`, `geodata-worker:dev`, and `geodata-tile-gateway:dev` when `api/**` changes. The upload API enforces a
 50 GiB maximum, streams files without buffering them on the frontend, and
 supports `.osm.pbf`, GeoTIFF, GeoPackage, Shapefile ZIP, and MBTiles. Raw object
 keys are generated server-side and never returned to the browser.

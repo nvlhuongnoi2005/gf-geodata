@@ -17,12 +17,12 @@ formats.
 Successful conversions are exposed to administrators as private artifacts:
 
 - `GET /api/geodata/v1/artifacts` lists safe artifact metadata.
-- `GET /api/geodata/v1/artifacts/{id}/tilejson` returns TileJSON.
-- `GET /api/geodata/v1/artifacts/{id}/tiles/{z}/{x}/{y}` serves an MBTiles tile.
 
-The API keeps a local, ephemeral MBTiles cache for preview. It downloads from
-`geodata-derived` only after an authenticated request and never returns an S3
-bucket, endpoint, credential, or object key.
+An artifact is not browsable until it belongs to a published release. During
+publishing, the worker reads the MBTiles once, writes immutable tile objects to
+`geodata-published`, and records their safe tile metadata. The release preview
+and WebGIS both read individual tiles through the tile gateway; neither the
+browser nor the upload API downloads or caches the whole MBTiles artifact.
 
 ## Map access grants
 

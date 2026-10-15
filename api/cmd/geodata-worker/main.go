@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -23,6 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/catalog"
+	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/mbtiles"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/tilestore"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/tiling"
 )
@@ -209,6 +211,18 @@ func (w *worker) publishArtifact(ctx context.Context, releaseID string, artifact
 	if closeErr != nil {
 		return closeErr
 	}
+	metadata, err := mbtiles.ReadMetadata(ctx, path)
+	if err != nil {
+		return fmt.Errorf("read published MBTiles metadata: %w", err)
+	}
+	bounds, err := json.Marshal(metadata.Bounds.Values())
+	if err != nil {
+		return fmt.Errorf("encode tile bounds: %w", err)
+	}
+	vectorLayers, err := json.Marshal(metadata.VectorLayers)
+	if err != nil {
+		return fmt.Errorf("encode vector layer metadata: %w", err)
+	}
 	prefix := fmt.Sprintf("releases/%s/artifacts/%s", releaseID, artifact.ArtifactID)
 	format := "pbf"
 	extension := "pbf"
@@ -221,6 +235,8 @@ func (w *worker) publishArtifact(ctx context.Context, releaseID string, artifact
 		return fmt.Errorf("publish tile objects: %w", err)
 	}
 	artifact.TilePrefix, artifact.TileFormat = prefix, format
+	artifact.MinZoom, artifact.MaxZoom = metadata.MinZoom, metadata.MaxZoom
+	artifact.Bounds, artifact.VectorLayers = bounds, vectorLayers
 	storeCtx, stop := context.WithTimeout(ctx, 20*time.Second)
 	defer stop()
 	return w.store.CompleteReleasePublish(storeCtx, releaseID, *artifact)

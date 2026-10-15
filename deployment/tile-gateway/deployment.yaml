@@ -47,6 +47,8 @@ spec:
               valueFrom: { secretKeyRef: { name: geodata-upload-auth, key: issuer } }
             - name: AUTH_AUDIENCE
               valueFrom: { secretKeyRef: { name: geodata-upload-auth, key: audience } }
+            - name: AUTH_ADMIN_ROLE
+              value: admin
             # Needed only for restricted releases. The credential has SELECT-only
             # access to WebGIS users and is deliberately different from db-auth.
             - name: WEBGIS_DIRECTORY_DATABASE_URL

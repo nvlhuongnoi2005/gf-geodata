@@ -26,9 +26,10 @@ import {
   Typography,
 } from "@mui/material";
 import type { ChipProps } from "@mui/material";
-import { Boxes, FileStack, Plus, Tag } from "lucide-react";
+import { Eye, Plus, Tag } from "lucide-react";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
+import { ReleasePreviewDialog } from "../components/ReleasePreviewDialog";
 
 type Artifact = {
   id: string;
@@ -50,6 +51,7 @@ type Release = {
   status: ReleaseStatus;
   createdAt: string;
   updatedAt: string;
+  artifactIds: string[];
 };
 
 const apiRoot = "/api/geodata/v1";
@@ -69,6 +71,7 @@ export function ReleasesPage() {
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Release | null>(null);
+  const [previewRelease, setPreviewRelease] = useState<Release | null>(null);
   const [name, setName] = useState("");
   const [mapCode, setMapCode] = useState("");
   const [version, setVersion] = useState("1.0.0");
@@ -289,13 +292,18 @@ export function ReleasesPage() {
                       </Button>
                     )}
                     {release.status === "published" && (
-                      <Button
-                        size="small"
-                        color="warning"
-                        onClick={() => void unpublish(release.id)}
-                      >
-                        {t("release.unpublish")}
-                      </Button>
+                      <>
+                        <Button size="small" startIcon={<Eye size={15} />} onClick={() => setPreviewRelease(release)}>
+                          {t("release.preview")}
+                        </Button>
+                        <Button
+                          size="small"
+                          color="warning"
+                          onClick={() => void unpublish(release.id)}
+                        >
+                          {t("release.unpublish")}
+                        </Button>
+                      </>
                     )}
                     {(["draft", "failed", "archived"] as ReleaseStatus[]).includes(
                       release.status
@@ -432,6 +440,8 @@ export function ReleasesPage() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <ReleasePreviewDialog release={previewRelease} accessToken={accessToken} onClose={() => setPreviewRelease(null)} />
 
       <Dialog
         open={Boolean(deleteTarget)}

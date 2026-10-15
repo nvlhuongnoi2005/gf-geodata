@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -131,6 +132,7 @@ type MapRelease struct {
 	CreatedAt    time.Time  `json:"createdAt"`
 	UpdatedAt    time.Time  `json:"updatedAt"`
 	PublishedAt  *time.Time `json:"publishedAt"`
+	ArtifactIDs  []string   `json:"artifactIds"`
 }
 
 // AccessGrant references an identity owned by WebGIS. The catalog never
@@ -158,6 +160,7 @@ type ReleaseArtifact struct {
 	ReleaseID, ArtifactID, SourceName, OutputObjectKey string
 	TilePrefix, TileFormat                             string
 	MinZoom, MaxZoom                                   int
+	Bounds, VectorLayers                               json.RawMessage
 }
 
 type NewRawUpload struct {
@@ -445,7 +448,43 @@ func (s *Store) ListReleases(ctx context.Context, limit int) ([]MapRelease, erro
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.populateReleaseArtifactIDs(ctx, items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (s *Store) populateReleaseArtifactIDs(ctx context.Context, releases []MapRelease) error {
+	if len(releases) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(releases))
+	for _, release := range releases {
+		ids = append(ids, release.ID)
+	}
+	rows, err := s.pool.Query(ctx, `SELECT release_id::text, artifact_id::text FROM map_release_artifacts WHERE release_id::text = ANY($1::text[])`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byRelease := make(map[string][]string, len(releases))
+	for rows.Next() {
+		var releaseID, artifactID string
+		if err := rows.Scan(&releaseID, &artifactID); err != nil {
+			return err
+		}
+		byRelease[releaseID] = append(byRelease[releaseID], artifactID)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for index := range releases {
+		releases[index].ArtifactIDs = byRelease[releases[index].ID]
+	}
+	return nil
 }
 
 func (s *Store) MapCodeExists(ctx context.Context, mapCode string) (bool, error) {
@@ -613,7 +652,7 @@ func (s *Store) ClaimReleasePublish(ctx context.Context) (*MapRelease, []Release
 }
 
 func (s *Store) CompleteReleasePublish(ctx context.Context, releaseID string, artifact ReleaseArtifact) error {
-	_, err := s.pool.Exec(ctx, `UPDATE map_release_artifacts SET tile_prefix=$3,tile_format=$4,min_zoom=$5,max_zoom=$6 WHERE release_id=$1 AND artifact_id=$2`, releaseID, artifact.ArtifactID, artifact.TilePrefix, artifact.TileFormat, artifact.MinZoom, artifact.MaxZoom)
+	_, err := s.pool.Exec(ctx, `UPDATE map_release_artifacts SET tile_prefix=$3,tile_format=$4,min_zoom=$5,max_zoom=$6,bounds=$7::jsonb,vector_layers=$8::jsonb WHERE release_id=$1 AND artifact_id=$2`, releaseID, artifact.ArtifactID, artifact.TilePrefix, artifact.TileFormat, artifact.MinZoom, artifact.MaxZoom, defaultJSON(artifact.Bounds, "[-180,-85.051129,180,85.051129]"), defaultJSON(artifact.VectorLayers, "[]"))
 	return err
 }
 
@@ -632,7 +671,7 @@ func (s *Store) PublishedRelease(ctx context.Context, slug string) (MapRelease, 
 	if err != nil {
 		return MapRelease{}, nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT a.release_id,a.artifact_id,r.display_name,'',a.tile_prefix,a.tile_format,a.min_zoom,a.max_zoom FROM map_release_artifacts a JOIN conversion_jobs j ON j.id=a.artifact_id JOIN raw_uploads r ON r.id=j.raw_upload_id WHERE a.release_id=$1`, release.ID)
+	rows, err := s.pool.Query(ctx, `SELECT a.release_id,a.artifact_id,r.display_name,'',a.tile_prefix,a.tile_format,a.min_zoom,a.max_zoom,COALESCE(a.bounds::text,'[-180,-85.051129,180,85.051129]'),COALESCE(a.vector_layers::text,'[]') FROM map_release_artifacts a JOIN conversion_jobs j ON j.id=a.artifact_id JOIN raw_uploads r ON r.id=j.raw_upload_id WHERE a.release_id=$1`, release.ID)
 	if err != nil {
 		return MapRelease{}, nil, err
 	}
@@ -640,12 +679,21 @@ func (s *Store) PublishedRelease(ctx context.Context, slug string) (MapRelease, 
 	items := []ReleaseArtifact{}
 	for rows.Next() {
 		var item ReleaseArtifact
-		if err := rows.Scan(&item.ReleaseID, &item.ArtifactID, &item.SourceName, &item.OutputObjectKey, &item.TilePrefix, &item.TileFormat, &item.MinZoom, &item.MaxZoom); err != nil {
+		var bounds, vectorLayers string
+		if err := rows.Scan(&item.ReleaseID, &item.ArtifactID, &item.SourceName, &item.OutputObjectKey, &item.TilePrefix, &item.TileFormat, &item.MinZoom, &item.MaxZoom, &bounds, &vectorLayers); err != nil {
 			return MapRelease{}, nil, err
 		}
+		item.Bounds, item.VectorLayers = json.RawMessage(bounds), json.RawMessage(vectorLayers)
 		items = append(items, item)
 	}
 	return release, items, rows.Err()
+}
+
+func defaultJSON(value json.RawMessage, fallback string) string {
+	if len(value) == 0 || !json.Valid(value) {
+		return fallback
+	}
+	return string(value)
 }
 
 // ClaimConversionJob atomically reserves one queued job. SKIP LOCKED allows

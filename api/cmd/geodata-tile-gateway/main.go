@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -28,6 +29,7 @@ type gateway struct {
 	bucket           string
 	keys             keyfunc.Keyfunc
 	issuer, audience string
+	adminRole        string
 	directory        *directory.Directory
 }
 
@@ -63,7 +65,7 @@ func main() {
 		log.Fatal(err)
 	}
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) { o.BaseEndpoint = aws.String(required("S3_ENDPOINT")); o.UsePathStyle = true })
-	g := &gateway{store: store, s3: client, bucket: required("S3_PUBLISHED_BUCKET"), keys: keys, issuer: required("AUTH_ISSUER"), audience: required("AUTH_AUDIENCE"), directory: webgisDirectory}
+	g := &gateway{store: store, s3: client, bucket: required("S3_PUBLISHED_BUCKET"), keys: keys, issuer: required("AUTH_ISSUER"), audience: required("AUTH_AUDIENCE"), adminRole: env("AUTH_ADMIN_ROLE", "admin"), directory: webgisDirectory}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("GET /v1/releases/{slug}/tilejson/{artifactID}", g.tileJSON)
@@ -90,6 +92,9 @@ func (g *gateway) release(w http.ResponseWriter, r *http.Request) (catalog.MapRe
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return catalog.MapRelease{}, nil, false
 		}
+		if isAdmin(claims, g.adminRole) {
+			return release, arts, true
+		}
 		if release.Visibility == "restricted" {
 			userID, _ := claims["sub"].(string)
 			if userID == "" || g.directory == nil {
@@ -114,6 +119,40 @@ func (g *gateway) release(w http.ResponseWriter, r *http.Request) (catalog.MapRe
 	}
 	return release, arts, true
 }
+
+func isAdmin(claims jwt.MapClaims, role string) bool {
+	if claims["role"] == role {
+		return true
+	}
+	if roles, ok := claims["roles"].([]any); ok {
+		for _, item := range roles {
+			if item == role {
+				return true
+			}
+		}
+	}
+	if scopes, ok := claims["scope"].(string); ok {
+		for _, scope := range strings.Fields(scopes) {
+			if scope == "geodata:admin" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type tileJSONResponse struct {
+	TileJSON     string          `json:"tilejson"`
+	Name         string          `json:"name"`
+	Scheme       string          `json:"scheme"`
+	Format       string          `json:"format"`
+	Tiles        []string        `json:"tiles"`
+	Bounds       json.RawMessage `json:"bounds"`
+	MinZoom      int             `json:"minzoom"`
+	MaxZoom      int             `json:"maxzoom"`
+	VectorLayers json.RawMessage `json:"vector_layers,omitempty"`
+}
+
 func (g *gateway) claims(r *http.Request) (jwt.MapClaims, bool) {
 	h := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if h == r.Header.Get("Authorization") {
@@ -131,14 +170,19 @@ func (g *gateway) tileJSON(w http.ResponseWriter, r *http.Request) {
 	for _, a := range arts {
 		if a.ArtifactID == r.PathValue("artifactID") {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, `{"tilejson":"3.0.0","name":%q,"scheme":"xyz","format":%q,"minzoom":%d,"maxzoom":%d,"tiles":["/tiles/v1/releases/%s/tiles/%s/{z}/{x}/{y}"]}`, a.SourceName, a.TileFormat, a.MinZoom, a.MaxZoom, r.PathValue("slug"), a.ArtifactID)
+			_ = json.NewEncoder(w).Encode(tileJSONResponse{
+				TileJSON: "3.0.0", Name: a.SourceName, Scheme: "xyz", Format: a.TileFormat,
+				Tiles:  []string{"/tiles/v1/releases/" + r.PathValue("slug") + "/tiles/" + a.ArtifactID + "/{z}/{x}/{y}"},
+				Bounds: defaultJSON(a.Bounds, "[-180,-85.051129,180,85.051129]"), MinZoom: a.MinZoom, MaxZoom: a.MaxZoom,
+				VectorLayers: defaultJSON(a.VectorLayers, "[]"),
+			})
 			return
 		}
 	}
 	http.NotFound(w, r)
 }
 func (g *gateway) tile(w http.ResponseWriter, r *http.Request) {
-	_, arts, ok := g.release(w, r)
+	release, arts, ok := g.release(w, r)
 	if !ok {
 		return
 	}
@@ -161,10 +205,21 @@ func (g *gateway) tile(w http.ResponseWriter, r *http.Request) {
 			}
 			defer out.Body.Close()
 			w.Header().Set("Content-Type", "application/vnd.mapbox-vector-tile")
-			w.Header().Set("Cache-Control", "public, max-age=86400")
+			if release.Visibility == "public" {
+				w.Header().Set("Cache-Control", "public, max-age=86400")
+			} else {
+				w.Header().Set("Cache-Control", "private, max-age=86400")
+			}
 			_, _ = io.Copy(w, out.Body)
 			return
 		}
 	}
 	http.NotFound(w, r)
+}
+
+func defaultJSON(value json.RawMessage, fallback string) json.RawMessage {
+	if len(value) == 0 || !json.Valid(value) {
+		return json.RawMessage(fallback)
+	}
+	return value
 }
