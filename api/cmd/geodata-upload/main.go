@@ -477,7 +477,14 @@ func (s *server) publishRelease(w http.ResponseWriter, r *http.Request) {
 	ctx, c := context.WithTimeout(r.Context(), 10*time.Second)
 	defer c()
 	if err := s.store.StartReleasePublish(ctx, id); err != nil {
-		http.Error(w, "release is not a draft", 409)
+		// Do not turn database or infrastructure failures into a misleading
+		// lifecycle error. The draft remains unchanged when publishing fails.
+		slog.Error("publish map release", "release_id", id, "error", err)
+		if errors.Is(err, catalog.ErrConversionJobNotFound) || errors.Is(err, catalog.ErrConversionJobNotActive) {
+			http.Error(w, "this release can no longer be published", http.StatusConflict)
+			return
+		}
+		http.Error(w, "could not publish the release right now", http.StatusServiceUnavailable)
 		return
 	}
 	w.WriteHeader(202)

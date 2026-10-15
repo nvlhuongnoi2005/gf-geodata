@@ -609,8 +609,8 @@ WHERE release_id=$1`, id).Scan(&cacheReady)
 	}
 	result, err := tx.Exec(ctx, `
 UPDATE map_releases
-SET status=$2,
-    published_at=CASE WHEN $2='published' THEN NOW() ELSE NULL END,
+SET status=$2::VARCHAR(32),
+    published_at=CASE WHEN $2::VARCHAR(32)='published' THEN NOW() ELSE NULL END,
     failure_message=NULL,
     updated_at=NOW()
 WHERE id=$1 AND status='draft'`, id, status)
