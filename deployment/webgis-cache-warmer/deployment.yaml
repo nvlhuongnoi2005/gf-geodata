@@ -25,6 +25,20 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        # Existing WebGIS datasets are root-owned. Grant the warmer access only
+        # to its own subtree; never recurse through or alter other map data.
+        - name: prepare-geodata-cache-directory
+          image: busybox:1.37
+          command: ["sh", "-ec", "mkdir -p /tile-server/data/mbtiles/geodata && chown 10001:10001 /tile-server/data/mbtiles/geodata && chmod 0770 /tile-server/data/mbtiles/geodata"]
+          volumeMounts:
+            - { name: tile-data, mountPath: /tile-server/data }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL], add: [CHOWN, FOWNER] }
+            readOnlyRootFilesystem: true
+            runAsUser: 0
+            runAsGroup: 0
       containers:
         - name: cache-warmer
           image: ghcr.io/nvlhuongnoi2005/tile-server/geodata-worker:dev
@@ -34,7 +48,7 @@ spec:
             - { name: JOB_POLL_INTERVAL, value: 5s }
             # Keep GeoData artifacts under the same MBTiles directory already
             # used by the existing WebGIS TileServer dataset importer.
-            - { name: TILE_SERVER_CACHE_ROOT, value: /tile-server/data/mbtiles }
+            - { name: TILE_SERVER_CACHE_ROOT, value: /tile-server/data/mbtiles/geodata }
             - { name: TILE_SERVER_INTERNAL_URL, value: http://tile-server:8080 }
             - { name: TILE_SERVER_WARM_TIMEOUT, value: 2m }
             - { name: S3_ENDPOINT, value: http://seaweedfs-s3.storage.svc.cluster.local:8333 }
