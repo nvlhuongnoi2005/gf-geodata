@@ -230,3 +230,33 @@ runtime limit and up to 50 GiB node-local temporary space. For a country-scale
 PBF, give Docker Desktop at least 10 GiB RAM (or run the worker on a dedicated
 node); lowering the reservation only makes scheduling possible and does not
 reduce Tilemaker's actual peak-memory requirement.
+
+## Register artifacts and warm the existing WebGIS TileServer
+
+Publishing no longer expands one MBTiles file into a large number of S3 tile
+objects. The normal conversion worker only writes the immutable MBTiles source
+to `geodata-derived`. The separate cache warmer runs in namespace `webgis`,
+mounts the existing `tile-data` PVC under its `mbtiles` directory, downloads one MBTiles file, atomically
+activates it, and waits for `tile-server` to expose `/datas/{dataset}.json`.
+The GeoData tile gateway preserves authentication and authorization while
+proxying the fast local TileServer read.
+
+Create namespace-local copies of the existing catalog and worker S3 Secrets
+(they are namespace-scoped), then apply the separate WebGIS-owned workload:
+
+```powershell
+& .\deployment\scripts\create-geodata-tileserver-cache-warmer-secrets.ps1
+kubectl apply -k deployment
+kubectl apply -k deployment/webgis-cache-warmer
+kubectl -n webgis rollout status deployment/geodata-tileserver-cache-warmer --timeout=5m
+kubectl -n tile-server rollout restart deployment/geodata-worker,deployment/geodata-tile-gateway
+kubectl -n tile-server rollout status deployment/geodata-worker --timeout=5m
+kubectl -n tile-server rollout status deployment/geodata-tile-gateway --timeout=5m
+```
+
+On the current one-node WebGIS setup, `tile-data` is a `ReadWriteOnce` PVC and
+the TileServer is read-only while the warmer writes. This is sufficient for the
+single-node cluster. Before scaling to multiple nodes or TileServer replicas,
+replace `webgis/tile-data` with an RWX NFS (or equivalent shared filesystem)
+PVC mounted at the same `/tile-server/data` path. Do not mount a PVC across
+namespaces; Kubernetes does not permit that.

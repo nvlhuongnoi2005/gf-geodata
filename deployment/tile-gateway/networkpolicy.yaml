@@ -1,0 +1,43 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: geodata-tile-gateway-private
+  namespace: tile-server
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: geodata-tile-gateway
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-catalog-postgresql
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: webgis
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tile-server
+      ports: [{ protocol: TCP, port: 8080 }]
+    # Temporary legacy path. Remove after old object-store releases are retired.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: storage
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: seaweedfs
+      ports: [{ protocol: TCP, port: 8333 }]
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }

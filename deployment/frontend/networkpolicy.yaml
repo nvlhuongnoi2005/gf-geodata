@@ -44,6 +44,16 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: tile-server
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-tile-gateway
+      ports:
+        - protocol: TCP
+          port: 8091
+    - to:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: kube-system
           podSelector:
             matchLabels:

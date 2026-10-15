@@ -16,6 +16,15 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: geodata-worker
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-tile-gateway
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: webgis
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: geodata-tileserver-cache-warmer
       ports:
         - protocol: TCP
           port: 5432

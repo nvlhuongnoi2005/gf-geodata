@@ -30,6 +30,8 @@ spec:
           image: ghcr.io/nvlhuongnoi2005/tile-server/geodata-worker:dev
           imagePullPolicy: Always
           env:
+            - name: WORKER_MODE
+              value: conversion
             - name: S3_ENDPOINT
               value: http://seaweedfs-s3.storage.svc.cluster.local:8333
             - name: S3_REGION
@@ -38,8 +40,6 @@ spec:
               value: geodata-raw
             - name: S3_DERIVED_BUCKET
               value: geodata-derived
-            - name: S3_PUBLISHED_BUCKET
-              value: geodata-published
             - name: POSTGRES_HOST
               value: geodata-catalog-postgresql
             - name: POSTGRES_PORT

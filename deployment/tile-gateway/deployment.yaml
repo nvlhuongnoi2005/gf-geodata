@@ -18,6 +18,10 @@ spec:
     spec:
       automountServiceAccountToken: false
       imagePullSecrets: [{ name: ghcr-pull }]
+      securityContext:
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: gateway
           image: ghcr.io/nvlhuongnoi2005/tile-server/geodata-tile-gateway:dev
@@ -28,6 +32,9 @@ spec:
             - { name: S3_ENDPOINT, value: http://seaweedfs-s3.storage.svc.cluster.local:8333 }
             - { name: S3_REGION, value: us-east-1 }
             - { name: S3_PUBLISHED_BUCKET, value: geodata-published }
+            # New releases are served from the WebGIS TileServer MBTiles cache.
+            # S3 remains only for releases published before this migration.
+            - { name: TILE_SERVER_INTERNAL_URL, value: http://tile-server.webgis.svc.cluster.local:8080 }
             - { name: POSTGRES_HOST, value: geodata-catalog-postgresql }
             - { name: POSTGRES_PORT, value: "5432" }
             - { name: POSTGRES_SSLMODE, value: disable }
@@ -54,6 +61,18 @@ spec:
             - name: WEBGIS_DIRECTORY_DATABASE_URL
               valueFrom:
                 secretKeyRef: { name: geodata-webgis-directory, key: database-url, optional: true }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
           resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: "1", memory: 512Mi } }
 ---
 apiVersion: v1

@@ -1,1 +1,3 @@
-resources: [deployment.yaml]
+resources:
+  - deployment.yaml
+  - networkpolicy.yaml

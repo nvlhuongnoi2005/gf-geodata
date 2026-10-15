@@ -159,6 +159,7 @@ var ErrAccessGrantNotFound = errors.New("access grant not found")
 type ReleaseArtifact struct {
 	ReleaseID, ArtifactID, SourceName, OutputObjectKey string
 	TilePrefix, TileFormat                             string
+	ServingBackend, TileServerDataset, WarmStatus      string
 	MinZoom, MaxZoom                                   int
 	Bounds, VectorLayers                               json.RawMessage
 }
@@ -494,14 +495,22 @@ func (s *Store) MapCodeExists(ctx context.Context, mapCode string) (bool, error)
 }
 
 func (s *Store) StartReleasePublish(ctx context.Context, id string) error {
-	result, err := s.pool.Exec(ctx, `UPDATE map_releases SET status='publishing',failure_message=NULL,updated_at=NOW() WHERE id=$1 AND status='draft'`, id)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	result, err := tx.Exec(ctx, `UPDATE map_releases SET status='publishing',failure_message=NULL,updated_at=NOW() WHERE id=$1 AND status='draft'`, id)
 	if err != nil {
 		return err
 	}
 	if result.RowsAffected() != 1 {
 		return ErrConversionJobNotActive
 	}
-	return nil
+	if _, err := tx.Exec(ctx, `UPDATE map_release_artifacts SET warm_status='pending', warmed_at=NULL WHERE release_id=$1`, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // UnpublishRelease immediately removes a release from the tile gateway by
@@ -652,7 +661,11 @@ func (s *Store) ClaimReleasePublish(ctx context.Context) (*MapRelease, []Release
 }
 
 func (s *Store) CompleteReleasePublish(ctx context.Context, releaseID string, artifact ReleaseArtifact) error {
-	_, err := s.pool.Exec(ctx, `UPDATE map_release_artifacts SET tile_prefix=$3,tile_format=$4,min_zoom=$5,max_zoom=$6,bounds=$7::jsonb,vector_layers=$8::jsonb WHERE release_id=$1 AND artifact_id=$2`, releaseID, artifact.ArtifactID, artifact.TilePrefix, artifact.TileFormat, artifact.MinZoom, artifact.MaxZoom, defaultJSON(artifact.Bounds, "[-180,-85.051129,180,85.051129]"), defaultJSON(artifact.VectorLayers, "[]"))
+	_, err := s.pool.Exec(ctx, `
+UPDATE map_release_artifacts
+SET serving_backend='tileserver_cache', tile_server_dataset=$3, warm_status='ready', warmed_at=NOW(),
+    tile_prefix=NULL, tile_format=$4, min_zoom=$5, max_zoom=$6, bounds=$7::jsonb, vector_layers=$8::jsonb
+WHERE release_id=$1 AND artifact_id=$2`, releaseID, artifact.ArtifactID, artifact.TileServerDataset, artifact.TileFormat, artifact.MinZoom, artifact.MaxZoom, defaultJSON(artifact.Bounds, "[-180,-85.051129,180,85.051129]"), defaultJSON(artifact.VectorLayers, "[]"))
 	return err
 }
 
@@ -661,8 +674,18 @@ func (s *Store) FinishReleasePublish(ctx context.Context, id string) error {
 	return err
 }
 func (s *Store) FailReleasePublish(ctx context.Context, id, message string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE map_releases SET status='failed',failure_message=LEFT($2,4000),updated_at=NOW() WHERE id=$1`, id, message)
-	return err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `UPDATE map_releases SET status='failed',failure_message=LEFT($2,4000),updated_at=NOW() WHERE id=$1`, id, message); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE map_release_artifacts SET warm_status='failed' WHERE release_id=$1 AND warm_status='pending'`, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) PublishedRelease(ctx context.Context, slug string) (MapRelease, []ReleaseArtifact, error) {
@@ -671,7 +694,7 @@ func (s *Store) PublishedRelease(ctx context.Context, slug string) (MapRelease, 
 	if err != nil {
 		return MapRelease{}, nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT a.release_id,a.artifact_id,r.display_name,'',a.tile_prefix,a.tile_format,a.min_zoom,a.max_zoom,COALESCE(a.bounds::text,'[-180,-85.051129,180,85.051129]'),COALESCE(a.vector_layers::text,'[]') FROM map_release_artifacts a JOIN conversion_jobs j ON j.id=a.artifact_id JOIN raw_uploads r ON r.id=j.raw_upload_id WHERE a.release_id=$1`, release.ID)
+	rows, err := s.pool.Query(ctx, `SELECT a.release_id,a.artifact_id,r.display_name,'',COALESCE(a.tile_prefix,''),COALESCE(a.tile_format,''),COALESCE(a.serving_backend,'object_store'),COALESCE(a.tile_server_dataset,''),COALESCE(a.warm_status,'not_required'),a.min_zoom,a.max_zoom,COALESCE(a.bounds::text,'[-180,-85.051129,180,85.051129]'),COALESCE(a.vector_layers::text,'[]') FROM map_release_artifacts a JOIN conversion_jobs j ON j.id=a.artifact_id JOIN raw_uploads r ON r.id=j.raw_upload_id WHERE a.release_id=$1`, release.ID)
 	if err != nil {
 		return MapRelease{}, nil, err
 	}
@@ -680,7 +703,7 @@ func (s *Store) PublishedRelease(ctx context.Context, slug string) (MapRelease, 
 	for rows.Next() {
 		var item ReleaseArtifact
 		var bounds, vectorLayers string
-		if err := rows.Scan(&item.ReleaseID, &item.ArtifactID, &item.SourceName, &item.OutputObjectKey, &item.TilePrefix, &item.TileFormat, &item.MinZoom, &item.MaxZoom, &bounds, &vectorLayers); err != nil {
+		if err := rows.Scan(&item.ReleaseID, &item.ArtifactID, &item.SourceName, &item.OutputObjectKey, &item.TilePrefix, &item.TileFormat, &item.ServingBackend, &item.TileServerDataset, &item.WarmStatus, &item.MinZoom, &item.MaxZoom, &bounds, &vectorLayers); err != nil {
 			return MapRelease{}, nil, err
 		}
 		item.Bounds, item.VectorLayers = json.RawMessage(bounds), json.RawMessage(vectorLayers)

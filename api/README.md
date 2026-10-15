@@ -19,10 +19,14 @@ Successful conversions are exposed to administrators as private artifacts:
 - `GET /api/geodata/v1/artifacts` lists safe artifact metadata.
 
 An artifact is not browsable until it belongs to a published release. During
-publishing, the worker reads the MBTiles once, writes immutable tile objects to
-`geodata-published`, and records their safe tile metadata. The release preview
-and WebGIS both read individual tiles through the tile gateway; neither the
-browser nor the upload API downloads or caches the whole MBTiles artifact.
+publishing, GeoData registers the immutable MBTiles artifact to that release.
+A cache-warmer running beside the existing WebGIS TileServer copies that one
+MBTiles file from `geodata-derived` into TileServer's `tile-data` PVC using an
+atomic rename, then verifies TileServer has indexed it. Only then is the
+release marked `published`. The gateway continues to enforce GeoData access
+control, but its hot path now proxies TileServer's local MBTiles read rather
+than issuing an S3 request for every tile. Older releases keep their original
+object-store route until they are republished as a new release version.
 
 ## Map access grants
 

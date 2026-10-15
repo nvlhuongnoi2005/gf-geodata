@@ -4,13 +4,13 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -25,22 +25,22 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/catalog"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/mbtiles"
-	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/tilestore"
 	"github.com/nvlhuongnoi2005/ms-geodata/api/internal/tiling"
 )
 
 var errConversionCanceled = errors.New("conversion canceled")
 
 type worker struct {
-	store           *catalog.Store
-	objectStore     *s3.Client
-	downloader      *manager.Downloader
-	uploader        *manager.Uploader
-	rawBucket       string
-	derivedBucket   string
-	publishedBucket string
-	workspaceRoot   string
-	converter       *tiling.Converter
+	store         *catalog.Store
+	objectStore   *s3.Client
+	downloader    *manager.Downloader
+	uploader      *manager.Uploader
+	rawBucket     string
+	derivedBucket string
+	workspaceRoot string
+	tileCacheRoot string
+	tileServerURL string
+	converter     *tiling.Converter
 }
 
 func required(name string) string {
@@ -57,26 +57,42 @@ func main() {
 
 	store := openCatalog(ctx)
 	defer store.Close()
-	app := &worker{store: store, rawBucket: required("S3_RAW_BUCKET"), derivedBucket: required("S3_DERIVED_BUCKET"), publishedBucket: required("S3_PUBLISHED_BUCKET"), workspaceRoot: environmentOr("WORKSPACE_ROOT", "/work")}
+	mode := environmentOr("WORKER_MODE", "conversion")
+	if mode != "conversion" && mode != "tileserver-cache-warmer" {
+		log.Fatalf("WORKER_MODE must be conversion or tileserver-cache-warmer")
+	}
+	app := &worker{store: store, derivedBucket: required("S3_DERIVED_BUCKET"), workspaceRoot: environmentOr("WORKSPACE_ROOT", "/work")}
 	app.objectStore = openS3(ctx)
 	app.downloader = manager.NewDownloader(app.objectStore, func(d *manager.Downloader) { d.Concurrency = 2; d.PartSize = 64 * 1024 * 1024 })
-	app.uploader = manager.NewUploader(app.objectStore, func(u *manager.Uploader) { u.Concurrency = 2; u.PartSize = 64 * 1024 * 1024 })
-	app.converter = tiling.New(tiling.Tools{
-		Tilemaker:        environmentOr("TILEMAKER_BIN", "/usr/src/app/tilemaker"),
-		Ogr2Ogr:          environmentOr("OGR2OGR_BIN", "ogr2ogr"),
-		GdalTranslate:    environmentOr("GDAL_TRANSLATE_BIN", "gdal_translate"),
-		OSMConfigPath:    environmentOr("TILEMAKER_CONFIG_PATH", "/usr/src/app/resources/config-openmaptiles.json"),
-		OSMProcessPath:   environmentOr("TILEMAKER_PROCESS_PATH", "/usr/src/app/resources/process-openmaptiles.lua"),
-		RasterTileFormat: environmentOr("RASTER_TILE_FORMAT", "PNG"),
-	})
+	if mode == "conversion" {
+		app.rawBucket = required("S3_RAW_BUCKET")
+		app.uploader = manager.NewUploader(app.objectStore, func(u *manager.Uploader) { u.Concurrency = 2; u.PartSize = 64 * 1024 * 1024 })
+		app.converter = tiling.New(tiling.Tools{
+			Tilemaker:        environmentOr("TILEMAKER_BIN", "/usr/src/app/tilemaker"),
+			Ogr2Ogr:          environmentOr("OGR2OGR_BIN", "ogr2ogr"),
+			GdalTranslate:    environmentOr("GDAL_TRANSLATE_BIN", "gdal_translate"),
+			OSMConfigPath:    environmentOr("TILEMAKER_CONFIG_PATH", "/usr/src/app/resources/config-openmaptiles.json"),
+			OSMProcessPath:   environmentOr("TILEMAKER_PROCESS_PATH", "/usr/src/app/resources/process-openmaptiles.lua"),
+			RasterTileFormat: environmentOr("RASTER_TILE_FORMAT", "PNG"),
+		})
+	} else {
+		app.tileCacheRoot = required("TILE_SERVER_CACHE_ROOT")
+		app.tileServerURL = strings.TrimRight(required("TILE_SERVER_INTERNAL_URL"), "/")
+	}
 
 	pollEvery := durationOr("JOB_POLL_INTERVAL", 5*time.Second)
-	slog.Info("geodata conversion worker started", "poll_interval", pollEvery.String())
+	slog.Info("geodata worker started", "mode", mode, "poll_interval", pollEvery.String())
 	for {
-		if !app.processOne(ctx) && !app.publishOne(ctx) {
+		worked := false
+		if mode == "tileserver-cache-warmer" {
+			worked = app.publishOne(ctx)
+		} else {
+			worked = app.processOne(ctx)
+		}
+		if !worked {
 			select {
 			case <-ctx.Done():
-				slog.Info("geodata conversion worker stopped")
+				slog.Info("geodata worker stopped", "mode", mode)
 				return
 			case <-time.After(pollEvery):
 			}
@@ -193,27 +209,35 @@ func (w *worker) publishOne(parent context.Context) bool {
 }
 
 func (w *worker) publishArtifact(ctx context.Context, releaseID string, artifact *catalog.ReleaseArtifact) error {
-	workspace, err := os.MkdirTemp(w.workspaceRoot, "release-"+releaseID+"-")
-	if err != nil {
-		return err
+	if err := os.MkdirAll(w.tileCacheRoot, 0o750); err != nil {
+		return fmt.Errorf("create TileServer cache root: %w", err)
 	}
-	defer os.RemoveAll(workspace)
-	path := filepath.Join(workspace, "artifact.mbtiles")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	dataset := "geodata-" + strings.ReplaceAll(artifact.ArtifactID, "-", "")
+	target := filepath.Join(w.tileCacheRoot, dataset+".mbtiles")
+	file, err := os.CreateTemp(w.tileCacheRoot, "."+dataset+"-*.mbtiles")
 	if err != nil {
+		return fmt.Errorf("create temporary TileServer artifact: %w", err)
+	}
+	temporary := file.Name()
+	defer os.Remove(temporary)
+	if err := file.Chmod(0o640); err != nil {
+		_ = file.Close()
 		return err
 	}
 	_, downloadErr := w.downloader.Download(ctx, file, &s3.GetObjectInput{Bucket: aws.String(w.derivedBucket), Key: aws.String(artifact.OutputObjectKey)})
+	if syncErr := file.Sync(); syncErr != nil && downloadErr == nil {
+		downloadErr = syncErr
+	}
 	closeErr := file.Close()
 	if downloadErr != nil {
-		return fmt.Errorf("download derived artifact: %w", downloadErr)
+		return fmt.Errorf("download derived artifact into TileServer cache: %w", downloadErr)
 	}
 	if closeErr != nil {
 		return closeErr
 	}
-	metadata, err := mbtiles.ReadMetadata(ctx, path)
+	metadata, err := mbtiles.ReadMetadata(ctx, temporary)
 	if err != nil {
-		return fmt.Errorf("read published MBTiles metadata: %w", err)
+		return fmt.Errorf("read cached MBTiles metadata: %w", err)
 	}
 	bounds, err := json.Marshal(metadata.Bounds.Values())
 	if err != nil {
@@ -223,23 +247,55 @@ func (w *worker) publishArtifact(ctx context.Context, releaseID string, artifact
 	if err != nil {
 		return fmt.Errorf("encode vector layer metadata: %w", err)
 	}
-	prefix := fmt.Sprintf("releases/%s/artifacts/%s", releaseID, artifact.ArtifactID)
-	format := "pbf"
-	extension := "pbf"
-	contentType := "application/vnd.mapbox-vector-tile"
-	if err := tilestore.Export(ctx, path, func(tile tilestore.Tile) error {
-		key := fmt.Sprintf("%s/tiles/%d/%d/%d.%s", prefix, tile.Z, tile.X, tile.Y, extension)
-		_, err := w.objectStore.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(w.publishedBucket), Key: aws.String(key), Body: bytes.NewReader(tile.Data), ContentType: aws.String(contentType), CacheControl: aws.String("public, max-age=31536000, immutable")})
-		return err
-	}); err != nil {
-		return fmt.Errorf("publish tile objects: %w", err)
+	// Rename on the shared PVC is atomic. TileServer only ever observes a
+	// complete SQLite file, never the temporary download.
+	if err := os.Rename(temporary, target); err != nil {
+		return fmt.Errorf("activate TileServer artifact: %w", err)
 	}
-	artifact.TilePrefix, artifact.TileFormat = prefix, format
+	if err := w.waitForTileServer(ctx, dataset); err != nil {
+		return err
+	}
+	artifact.TileServerDataset, artifact.TileFormat = dataset, metadata.Format
 	artifact.MinZoom, artifact.MaxZoom = metadata.MinZoom, metadata.MaxZoom
 	artifact.Bounds, artifact.VectorLayers = bounds, vectorLayers
 	storeCtx, stop := context.WithTimeout(ctx, 20*time.Second)
 	defer stop()
 	return w.store.CompleteReleasePublish(storeCtx, releaseID, *artifact)
+}
+
+// waitForTileServer is both the cache warm verification and the registration
+// barrier. A release becomes visible only after TileServer has indexed the
+// newly atomically-written MBTiles file.
+func (w *worker) waitForTileServer(parent context.Context, dataset string) error {
+	deadline := time.Now().Add(durationOr("TILE_SERVER_WARM_TIMEOUT", 2*time.Minute))
+	url := w.tileServerURL + "/datas/" + dataset + ".json"
+	client := &http.Client{Timeout: 5 * time.Second}
+	var lastErr error
+	for time.Now().Before(deadline) {
+		request, err := http.NewRequestWithContext(parent, http.MethodGet, url, nil)
+		if err != nil {
+			return err
+		}
+		response, err := client.Do(request)
+		if err == nil {
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusOK {
+				return nil
+			}
+			lastErr = fmt.Errorf("TileServer returned %s for dataset %s", response.Status, dataset)
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-parent.Done():
+			return parent.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	if lastErr == nil {
+		return fmt.Errorf("TileServer did not register dataset %s before warm timeout", dataset)
+	}
+	return fmt.Errorf("TileServer did not register dataset %s before warm timeout: %w", dataset, lastErr)
 }
 
 func (w *worker) runJob(ctx context.Context, job *catalog.ConversionJob) error {

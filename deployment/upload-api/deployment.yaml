@@ -33,6 +33,8 @@ spec:
           env:
             - name: HTTP_ADDR
               value: ":8090"
+            - name: TILE_GATEWAY_HEALTH_URL
+              value: http://geodata-tile-gateway:8091/healthz
             - name: S3_ENDPOINT
               value: http://seaweedfs-s3.storage.svc.cluster.local:8333
             - name: S3_BUCKET

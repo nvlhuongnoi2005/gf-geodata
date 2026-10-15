@@ -17,6 +17,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -27,6 +28,8 @@ type gateway struct {
 	store            *catalog.Store
 	s3               *s3.Client
 	bucket           string
+	tileServerURL    string
+	httpClient       *http.Client
 	keys             keyfunc.Keyfunc
 	issuer, audience string
 	adminRole        string
@@ -60,17 +63,40 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(env("S3_REGION", "us-east-1")), awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(required("S3_ACCESS_KEY"), required("S3_SECRET_KEY"), "")))
-	if err != nil {
-		log.Fatal(err)
+	var objectStore *s3.Client
+	// object storage remains optional only for legacy releases published before
+	// the TileServer-cache migration. New releases never read a tile from S3.
+	if endpoint, accessKey, secretKey := strings.TrimSpace(os.Getenv("S3_ENDPOINT")), strings.TrimSpace(os.Getenv("S3_ACCESS_KEY")), strings.TrimSpace(os.Getenv("S3_SECRET_KEY")); endpoint != "" && accessKey != "" && secretKey != "" {
+		cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(env("S3_REGION", "us-east-1")), awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")))
+		if err != nil {
+			log.Fatal(err)
+		}
+		objectStore = s3.NewFromConfig(cfg, func(o *s3.Options) { o.BaseEndpoint = aws.String(endpoint); o.UsePathStyle = true })
 	}
-	client := s3.NewFromConfig(cfg, func(o *s3.Options) { o.BaseEndpoint = aws.String(required("S3_ENDPOINT")); o.UsePathStyle = true })
-	g := &gateway{store: store, s3: client, bucket: required("S3_PUBLISHED_BUCKET"), keys: keys, issuer: required("AUTH_ISSUER"), audience: required("AUTH_AUDIENCE"), adminRole: env("AUTH_ADMIN_ROLE", "admin"), directory: webgisDirectory}
+	g := &gateway{store: store, s3: objectStore, bucket: env("S3_PUBLISHED_BUCKET", "geodata-published"), tileServerURL: strings.TrimRight(required("TILE_SERVER_INTERNAL_URL"), "/"), httpClient: &http.Client{Timeout: 10 * time.Second}, keys: keys, issuer: required("AUTH_ISSUER"), audience: required("AUTH_AUDIENCE"), adminRole: env("AUTH_ADMIN_ROLE", "admin"), directory: webgisDirectory}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("GET /healthz", g.health)
 	mux.HandleFunc("GET /v1/releases/{slug}/tilejson/{artifactID}", g.tileJSON)
 	mux.HandleFunc("GET /v1/releases/{slug}/tiles/{artifactID}/{z}/{x}/{y}", g.tile)
 	log.Fatal(http.ListenAndServe(env("HTTP_ADDR", ":8091"), mux))
+}
+func (g *gateway) health(w http.ResponseWriter, r *http.Request) {
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, g.tileServerURL+"/", nil)
+	if err != nil {
+		http.Error(w, "TileServer URL is invalid", http.StatusServiceUnavailable)
+		return
+	}
+	response, err := g.httpClient.Do(request)
+	if err != nil {
+		http.Error(w, "TileServer is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	_ = response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusInternalServerError {
+		http.Error(w, "TileServer is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func env(n, d string) string {
 	if v := strings.TrimSpace(os.Getenv(n)); v != "" {
@@ -195,6 +221,14 @@ func (g *gateway) tile(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, a := range arts {
 		if a.ArtifactID == r.PathValue("artifactID") {
+			if a.ServingBackend == "tileserver_cache" {
+				g.tileFromTileServer(w, r, release, a, z, x, y)
+				return
+			}
+			if g.s3 == nil {
+				http.Error(w, "legacy tile storage is unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			key := fmt.Sprintf("%s/tiles/%d/%d/%d.%s", a.TilePrefix, z, x, y, a.TileFormat)
 			ctx, c := context.WithTimeout(r.Context(), 10*time.Second)
 			defer c()
@@ -215,6 +249,58 @@ func (g *gateway) tile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.NotFound(w, r)
+}
+
+// tileFromTileServer retains GeoData authorization while delegating the hot
+// tile read to TileServer's local MBTiles cache. It intentionally does not
+// disclose the TileServer service name or its internal data endpoint.
+func (g *gateway) tileFromTileServer(w http.ResponseWriter, r *http.Request, release catalog.MapRelease, artifact catalog.ReleaseArtifact, z, x, y int) {
+	if artifact.TileServerDataset == "" || artifact.WarmStatus != "ready" {
+		http.NotFound(w, r)
+		return
+	}
+	extension := artifact.TileFormat
+	if extension == "" {
+		extension = "pbf"
+	}
+	target := fmt.Sprintf("%s/datas/%s/%d/%d/%d.%s", g.tileServerURL, url.PathEscape(artifact.TileServerDataset), z, x, y, extension)
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target, nil)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	response, err := g.httpClient.Do(request)
+	if err != nil {
+		http.Error(w, "TileServer is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		http.NotFound(w, r)
+		return
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		http.Error(w, "TileServer failed to serve the tile", http.StatusBadGateway)
+		return
+	}
+	contentType := response.Header.Get("Content-Type")
+	if contentType == "" {
+		if extension == "pbf" || extension == "mvt" {
+			contentType = "application/vnd.mapbox-vector-tile"
+		} else {
+			contentType = "image/" + extension
+		}
+	}
+	w.Header().Set("Content-Type", contentType)
+	if etag := response.Header.Get("ETag"); etag != "" {
+		w.Header().Set("ETag", etag)
+	}
+	if release.Visibility == "public" {
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+	} else {
+		w.Header().Set("Cache-Control", "private, max-age=86400")
+	}
+	_, _ = io.Copy(w, response.Body)
 }
 
 func defaultJSON(value json.RawMessage, fallback string) json.RawMessage {
