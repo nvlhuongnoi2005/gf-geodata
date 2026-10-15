@@ -56,24 +56,23 @@ type RawUpload struct {
 // ConversionJob is an internal work item. RawObjectKey is intentionally not
 // exposed through the HTTP API; only the worker needs it to read from S3.
 type ConversionJob struct {
-	ID               string
-	RawUploadID      string
-	SourceFileName   string
-	SourceFormat     string
-	RawObjectKey     string
-	Status           string
-	MinZoom          int
-	MaxZoom          int
-	LayerName        string
-	SourceByteSize   int64
-	Progress         int
-	CurrentStep      string
-	EstimatedSeconds *int
-	OutputObjectKey  string
-	FailureMessage   string
-	CreatedAt        time.Time
-	StartedAt        *time.Time
-	FinishedAt       *time.Time
+	ID              string
+	RawUploadID     string
+	SourceFileName  string
+	SourceFormat    string
+	RawObjectKey    string
+	Status          string
+	MinZoom         int
+	MaxZoom         int
+	LayerName       string
+	SourceByteSize  int64
+	Progress        int
+	CurrentStep     string
+	OutputObjectKey string
+	FailureMessage  string
+	CreatedAt       time.Time
+	StartedAt       *time.Time
+	FinishedAt      *time.Time
 }
 
 type JobCounts struct {
@@ -85,21 +84,20 @@ type JobCounts struct {
 // ConversionJobView is safe for the user interface. It contains catalog names
 // and progress state, never S3 keys, credentials, or worker diagnostics.
 type ConversionJobView struct {
-	ID               string     `json:"id"`
-	RawUploadID      string     `json:"rawUploadId"`
-	SourceName       string     `json:"sourceName"`
-	SourceFile       string     `json:"sourceFileName"`
-	SourceFormat     string     `json:"sourceFormat"`
-	Status           string     `json:"status"`
-	MinZoom          int        `json:"minZoom"`
-	MaxZoom          int        `json:"maxZoom"`
-	LayerName        string     `json:"layerName,omitempty"`
-	Progress         int        `json:"progress"`
-	CurrentStep      string     `json:"currentStep"`
-	EstimatedSeconds *int       `json:"estimatedDurationSeconds,omitempty"`
-	CreatedAt        time.Time  `json:"createdAt"`
-	StartedAt        *time.Time `json:"startedAt"`
-	FinishedAt       *time.Time `json:"finishedAt"`
+	ID           string     `json:"id"`
+	RawUploadID  string     `json:"rawUploadId"`
+	SourceName   string     `json:"sourceName"`
+	SourceFile   string     `json:"sourceFileName"`
+	SourceFormat string     `json:"sourceFormat"`
+	Status       string     `json:"status"`
+	MinZoom      int        `json:"minZoom"`
+	MaxZoom      int        `json:"maxZoom"`
+	LayerName    string     `json:"layerName,omitempty"`
+	Progress     int        `json:"progress"`
+	CurrentStep  string     `json:"currentStep"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	StartedAt    *time.Time `json:"startedAt"`
+	FinishedAt   *time.Time `json:"finishedAt"`
 }
 
 // ConversionArtifactView is the safe, browser-facing metadata for a successful
@@ -361,7 +359,7 @@ RETURNING id, raw_upload_id, status, min_zoom, max_zoom, COALESCE(layer_name, ''
 func (s *Store) ListConversionJobs(ctx context.Context, limit int) ([]ConversionJobView, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT j.id, j.raw_upload_id, r.display_name, r.source_file_name, r.source_format,
-       j.status, j.min_zoom, j.max_zoom, COALESCE(j.layer_name, ''), j.progress, j.current_step, j.estimated_duration_seconds, j.created_at,
+	       j.status, j.min_zoom, j.max_zoom, COALESCE(j.layer_name, ''), j.progress, j.current_step, j.created_at,
        j.started_at, j.finished_at
 FROM conversion_jobs j
 JOIN raw_uploads r ON r.id = j.raw_upload_id
@@ -375,7 +373,7 @@ LIMIT $1`, limit)
 	for rows.Next() {
 		var item ConversionJobView
 		if err := rows.Scan(&item.ID, &item.RawUploadID, &item.SourceName, &item.SourceFile,
-			&item.SourceFormat, &item.Status, &item.MinZoom, &item.MaxZoom, &item.LayerName, &item.Progress, &item.CurrentStep, &item.EstimatedSeconds,
+			&item.SourceFormat, &item.Status, &item.MinZoom, &item.MaxZoom, &item.LayerName, &item.Progress, &item.CurrentStep,
 			&item.CreatedAt, &item.StartedAt, &item.FinishedAt); err != nil {
 			return nil, err
 		}
@@ -438,8 +436,12 @@ func (s *Store) ClaimCacheArtifact(ctx context.Context) (*CacheArtifact, error) 
 	err = tx.QueryRow(ctx, `
 SELECT id, output_object_key
 FROM conversion_jobs
-WHERE status='succeeded' AND output_object_key IS NOT NULL AND tile_cache_status='pending'
-ORDER BY finished_at NULLS LAST, created_at
+WHERE status='succeeded' AND output_object_key IS NOT NULL
+  AND (
+    tile_cache_status='pending' OR
+    (tile_cache_status='failed' AND COALESCE(tile_cache_last_attempt_at, TO_TIMESTAMP(0)) < NOW() - INTERVAL '5 minutes')
+  )
+ORDER BY CASE tile_cache_status WHEN 'pending' THEN 0 ELSE 1 END, finished_at NULLS LAST, created_at
 FOR UPDATE SKIP LOCKED
 LIMIT 1`).Scan(&artifact.ID, &artifact.OutputObjectKey)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -448,7 +450,7 @@ LIMIT 1`).Scan(&artifact.ID, &artifact.OutputObjectKey)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE conversion_jobs SET tile_cache_status='warming',tile_cache_failure=NULL WHERE id=$1`, artifact.ID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE conversion_jobs SET tile_cache_status='warming',tile_cache_failure=NULL,tile_cache_attempts=tile_cache_attempts+1,tile_cache_last_attempt_at=NOW() WHERE id=$1`, artifact.ID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -627,6 +629,25 @@ func (s *Store) CreateAccessGrant(ctx context.Context, grant AccessGrant) (Acces
 		return AccessGrant{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if grant.PrincipalType == "public" {
+		grant.PrincipalID = "*"
+		grant.Scope = "view"
+		if _, err = tx.Exec(ctx, `UPDATE access_grants SET status='revoked',revoked_at=NOW(),revoked_by=NULLIF($2,'') WHERE release_id=$1 AND status='active' AND principal_type <> 'public'`, grant.ReleaseID, grant.CreatedBy); err != nil {
+			return AccessGrant{}, err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE map_releases SET visibility='public',updated_at=NOW() WHERE id=$1`, grant.ReleaseID); err != nil {
+			return AccessGrant{}, err
+		}
+	} else {
+		// A named-recipient policy replaces a previous public policy. Multiple
+		// named grants remain active together.
+		if _, err = tx.Exec(ctx, `UPDATE access_grants SET status='revoked',revoked_at=NOW(),revoked_by=NULLIF($2,'') WHERE release_id=$1 AND status='active' AND principal_type='public'`, grant.ReleaseID, grant.CreatedBy); err != nil {
+			return AccessGrant{}, err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE map_releases SET visibility='restricted',updated_at=NOW() WHERE id=$1`, grant.ReleaseID); err != nil {
+			return AccessGrant{}, err
+		}
+	}
 	err = tx.QueryRow(ctx, `
 INSERT INTO access_grants (principal_type,principal_id,release_id,scope,note,created_by)
 SELECT $1,$2,id,$3,$4,NULLIF($5,'') FROM map_releases WHERE id=$6
@@ -679,12 +700,21 @@ func (s *Store) RevokeAccessGrant(ctx context.Context, id, actorID string) error
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	result, err := tx.Exec(ctx, `UPDATE access_grants SET status='revoked',revoked_at=NOW(),revoked_by=NULLIF($2,'') WHERE id=$1 AND status='active'`, id, actorID)
+	var releaseID, principalType string
+	err = tx.QueryRow(ctx, `
+UPDATE access_grants SET status='revoked',revoked_at=NOW(),revoked_by=NULLIF($2,'')
+WHERE id=$1 AND status='active'
+RETURNING release_id,principal_type`, id, actorID).Scan(&releaseID, &principalType)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrAccessGrantNotFound
+	}
 	if err != nil {
 		return err
 	}
-	if result.RowsAffected() != 1 {
-		return ErrAccessGrantNotFound
+	if principalType == "public" {
+		if _, err = tx.Exec(ctx, `UPDATE map_releases SET visibility='restricted',updated_at=NOW() WHERE id=$1`, releaseID); err != nil {
+			return err
+		}
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO access_audit_events(action,grant_id,actor_id) VALUES ('grant_revoked',$1,NULLIF($2,''))`, id, actorID); err != nil {
 		return err
@@ -827,25 +857,13 @@ LIMIT 1`).Scan(
 		return nil, err
 	}
 	now := time.Now().UTC()
-	var estimate *int
-	if err := tx.QueryRow(ctx, `
-SELECT ROUND(AVG(EXTRACT(EPOCH FROM completed.finished_at - completed.started_at)))::INTEGER
-FROM conversion_jobs completed
-JOIN raw_uploads completed_source ON completed_source.id = completed.raw_upload_id
-WHERE completed.status = 'succeeded'
-  AND completed.finished_at IS NOT NULL
-  AND completed.started_at IS NOT NULL
-  AND completed_source.source_format = $1
-  AND completed_source.byte_size BETWEEN GREATEST(1, $2 / 2) AND $2 * 2`, job.SourceFormat, job.SourceByteSize).Scan(&estimate); err != nil {
-		return nil, err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE conversion_jobs SET status = 'running', progress = 5, current_step = 'downloading', started_at = $2, estimated_duration_seconds = $3 WHERE id = $1`, job.ID, now, estimate); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE conversion_jobs SET status = 'running', progress = 5, current_step = 'downloading', started_at = $2 WHERE id = $1`, job.ID, now); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE raw_uploads SET status = 'converting' WHERE id = $1`, job.RawUploadID); err != nil {
 		return nil, err
 	}
-	job.Status, job.Progress, job.CurrentStep, job.StartedAt, job.EstimatedSeconds = "running", 5, "downloading", &now, estimate
+	job.Status, job.Progress, job.CurrentStep, job.StartedAt = "running", 5, "downloading", &now
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}

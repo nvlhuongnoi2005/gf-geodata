@@ -24,11 +24,12 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { Building2, KeyRound, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
+import { Building2, Globe2, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 
 type PrincipalType = "user" | "organization";
+type AccessMode = "public" | "restricted";
 type DirectorySubject = {
   id: string;
   type: PrincipalType;
@@ -38,17 +39,16 @@ type DirectorySubject = {
 };
 type Grant = {
   id: string;
-  principalType: PrincipalType;
+  principalType: PrincipalType | "public";
   subjectName?: string;
   organization?: string;
   releaseId: string;
   releaseName: string;
-  scope: "view" | "export";
   note?: string;
   status: "active" | "revoked";
   createdAt: string;
 };
-type Release = { id: string; name: string; status: string; visibility: string };
+type Release = { id: string; name: string; status: string };
 
 const apiRoot = "/api/geodata/v1";
 
@@ -60,12 +60,12 @@ export function AccessPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<"unavailable" | "error" | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [accessMode, setAccessMode] = useState<AccessMode>("restricted");
   const [principalType, setPrincipalType] = useState<PrincipalType>("user");
   const [subjectQuery, setSubjectQuery] = useState("");
   const [subjects, setSubjects] = useState<DirectorySubject[]>([]);
   const [selectedSubject, setSelectedSubject] = useState<DirectorySubject | null>(null);
   const [releaseID, setReleaseID] = useState("");
-  const [scope, setScope] = useState<"view" | "export">("view");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
@@ -109,7 +109,7 @@ export function AccessPage() {
   }, [accessToken]);
 
   useEffect(() => {
-    if (!dialogOpen || !headers) return;
+    if (!dialogOpen || accessMode !== "restricted" || !headers) return;
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
@@ -128,7 +128,7 @@ export function AccessPage() {
       })();
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [dialogOpen, headers, principalType, subjectQuery]);
+  }, [dialogOpen, accessMode, headers, principalType, subjectQuery]);
 
   const activeUserCount = grants.filter(
     (grant) => grant.status === "active" && grant.principalType === "user"
@@ -146,17 +146,17 @@ export function AccessPage() {
   );
 
   const openGrantDialog = () => {
+    setAccessMode("restricted");
     setPrincipalType("user");
     setSubjectQuery("");
     setSelectedSubject(null);
     setReleaseID("");
-    setScope("view");
     setNote("");
     setSaveError(false);
     setDialogOpen(true);
   };
   const createGrant = async () => {
-    if (!headers || !selectedSubject || !releaseID) return;
+    if (!headers || !releaseID || (accessMode === "restricted" && !selectedSubject)) return;
     setSaving(true);
     setSaveError(false);
     try {
@@ -164,10 +164,10 @@ export function AccessPage() {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify({
-          principalType,
-          principalId: selectedSubject.id,
+          principalType: accessMode === "public" ? "public" : principalType,
+          principalId: accessMode === "public" ? "" : selectedSubject?.id,
           releaseId: releaseID,
-          scope,
+          scope: "view",
           note: note.trim(),
         }),
       });
@@ -259,13 +259,12 @@ export function AccessPage() {
       </Box>
 
       <TableContainer component={Paper} variant="outlined">
-        <Table sx={{ minWidth: 760 }}>
+        <Table sx={{ minWidth: 650 }}>
           <TableHead>
             <TableRow>
               <TableCell>{t("access.subject")}</TableCell>
               <TableCell>{t("access.department")}</TableCell>
               <TableCell>{t("access.releases")}</TableCell>
-              <TableCell>{t("access.scope")}</TableCell>
               <TableCell>{t("access.status")}</TableCell>
               <TableCell>{t("access.grantedBy")}</TableCell>
               <TableCell align="right">{t("access.actions")}</TableCell>
@@ -281,16 +280,22 @@ export function AccessPage() {
                 <TableRow key={grant.id} hover>
                   <TableCell>
                     <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-                      {grant.principalType === "user" ? (
+                      {grant.principalType === "public" ? (
+                        <Globe2 size={16} />
+                      ) : grant.principalType === "user" ? (
                         <UserRound size={16} />
                       ) : (
                         <Building2 size={16} />
                       )}
-                      <Typography sx={{ fontWeight: 700 }}>{grant.subjectName || "—"}</Typography>
+                      <Typography sx={{ fontWeight: 700 }}>
+                        {grant.principalType === "public" ? t("access.public") : grant.subjectName || "—"}
+                      </Typography>
                     </Stack>
                   </TableCell>
                   <TableCell>
-                    {grant.principalType === "organization"
+                    {grant.principalType === "public"
+                      ? "—"
+                      : grant.principalType === "organization"
                       ? grant.subjectName
                       : grant.organization || "—"}
                   </TableCell>
@@ -299,16 +304,6 @@ export function AccessPage() {
                       label={grant.releaseName}
                       size="small"
                       color="primary"
-                      variant="outlined"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Chip
-                      icon={<KeyRound size={13} />}
-                      label={
-                        grant.scope === "export" ? t("access.viewExport") : t("access.viewOnly")
-                      }
-                      size="small"
                       variant="outlined"
                     />
                   </TableCell>
@@ -355,6 +350,22 @@ export function AccessPage() {
           <Stack spacing={2.5} sx={{ pt: 0.5 }}>
             <Alert severity="info">{t("access.releaseHint")}</Alert>
             <FormControl fullWidth size="small">
+              <InputLabel>{t("access.policy")}</InputLabel>
+              <Select
+                value={accessMode}
+                label={t("access.policy")}
+                onChange={(event) => {
+                  setAccessMode(event.target.value as AccessMode);
+                  setSelectedSubject(null);
+                  setSubjects([]);
+                }}
+              >
+                <MenuItem value="public">{t("access.public")}</MenuItem>
+                <MenuItem value="restricted">{t("access.recipients")}</MenuItem>
+              </Select>
+            </FormControl>
+            {accessMode === "public" ? <Alert severity="info">{t("access.publicHint")}</Alert> : <>
+            <FormControl fullWidth size="small">
               <InputLabel>{t("access.type")}</InputLabel>
               <Select
                 value={principalType}
@@ -396,6 +407,7 @@ export function AccessPage() {
                 />
               )}
             />
+            </>}
             <FormControl fullWidth size="small">
               <InputLabel>{t("access.chooseRelease")}</InputLabel>
               <Select
@@ -415,17 +427,6 @@ export function AccessPage() {
                   ))}
               </Select>
             </FormControl>
-            <FormControl fullWidth size="small">
-              <InputLabel>{t("access.scopeLabel")}</InputLabel>
-              <Select
-                value={scope}
-                label={t("access.scopeLabel")}
-                onChange={(event) => setScope(event.target.value as "view" | "export")}
-              >
-                <MenuItem value="view">{t("access.viewOnly")}</MenuItem>
-                <MenuItem value="export">{t("access.viewExport")}</MenuItem>
-              </Select>
-            </FormControl>
             <TextField
               value={note}
               onChange={(event) => setNote(event.target.value)}
@@ -443,7 +444,7 @@ export function AccessPage() {
           <Button
             variant="contained"
             onClick={() => void createGrant()}
-            disabled={!selectedSubject || !releaseID || saving}
+            disabled={!releaseID || (accessMode === "restricted" && !selectedSubject) || saving}
           >
             {t("access.grant")}
           </Button>
@@ -504,7 +505,7 @@ function Metric({ icon, label, value }: { icon: ReactNode; label: string; value:
 function EmptyRow({ message }: { message: string }) {
   return (
     <TableRow>
-      <TableCell colSpan={7} sx={{ py: 5, textAlign: "center" }}>
+      <TableCell colSpan={6} sx={{ py: 5, textAlign: "center" }}>
         <Typography color="text.secondary">{message}</Typography>
       </TableCell>
     </TableRow>

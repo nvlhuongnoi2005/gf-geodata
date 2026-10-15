@@ -14,7 +14,7 @@ type ConversionJob = {
   id: string; rawUploadId: string; sourceName: string; sourceFileName: string; sourceFormat: string;
   status: "queued" | "running" | "succeeded" | "failed" | "canceled";
   minZoom: number; maxZoom: number; layerName?: string; progress: number; currentStep: string;
-  estimatedDurationSeconds?: number; createdAt: string; startedAt?: string | null;
+  createdAt: string;
 };
 type JobAction = { kind: "cancel" | "delete"; job: ConversionJob };
 
@@ -36,11 +36,6 @@ function formatDate(value: string): string {
 }
 function formatName(format: string): string {
   return ({ osm_pbf: "OSM PBF", geotiff: "GeoTIFF", geopackage: "GeoPackage", shapefile_zip: "Shapefile", mbtiles: "MBTiles" } as Record<string, string>)[format] ?? format;
-}
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${Math.max(1, Math.round(seconds))}s`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-  return `${(seconds / 3600).toFixed(1)}h`;
 }
 
 export function PipelinePage() {
@@ -122,17 +117,6 @@ export function PipelinePage() {
     succeeded: jobs.filter((job) => job.status === "succeeded").length,
     failed: jobs.filter((job) => job.status === "failed").length,
   };
-  const remainingEstimate = (job: ConversionJob): string | null => {
-    if (!job.estimatedDurationSeconds || !["queued", "running"].includes(job.status)) return null;
-    const elapsed = job.status === "running" && job.startedAt ? (Date.now() - new Date(job.startedAt).getTime()) / 1000 : 0;
-    return formatDuration(Math.max(0, job.estimatedDurationSeconds - elapsed));
-  };
-  const estimateLabel = (job: ConversionJob): string => {
-    const remaining = remainingEstimate(job);
-    if (remaining) return t("pipeline.estimateRemaining", { time: remaining });
-    return job.status === "running" ? t("pipeline.estimateUnavailable") : "";
-  };
-
   return <Stack spacing={3}>
     <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ justifyContent: "space-between", alignItems: { sm: "flex-end" } }}>
       <Box><Typography variant="h4" sx={{ fontSize: { xs: 24, sm: 27 }, fontWeight: 700, letterSpacing: "-0.02em" }}>{t("nav.pipeline")}</Typography><Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{t("pipeline.description")}</Typography></Box>
@@ -147,7 +131,7 @@ export function PipelinePage() {
       {jobs.length === 0 ? <TableRow><TableCell colSpan={5} sx={{ py: 5, textAlign: "center" }}><Typography color="text.secondary">{t("pipeline.empty")}</Typography></TableCell></TableRow> : jobs.map((job) => <TableRow key={job.id} hover>
         <TableCell><Typography sx={{ fontWeight: 650 }}>{job.sourceName}</Typography><Typography variant="caption" color="text.secondary">{job.sourceFileName} · {formatName(job.sourceFormat)}</Typography></TableCell>
         <TableCell><Typography variant="body2">MBTiles</Typography><Typography variant="caption" color="text.secondary">{t("pipeline.zoomRange", { min: job.minZoom, max: job.maxZoom })}</Typography></TableCell>
-        <TableCell sx={{ minWidth: 180 }}><Stack spacing={0.6}><LinearProgress variant="determinate" value={job.progress} color={job.status === "failed" ? "error" : job.status === "succeeded" ? "success" : "primary"} /><Typography variant="caption" color="text.secondary">{t(jobStepLabels[job.currentStep] ?? "pipeline.step.queued")} · {job.progress}%</Typography><Typography variant="caption" color="text.secondary">{estimateLabel(job)}</Typography></Stack></TableCell>
+        <TableCell sx={{ minWidth: 180 }}><Stack spacing={0.6}><LinearProgress variant="determinate" value={job.progress} color={job.status === "failed" ? "error" : job.status === "succeeded" ? "success" : "primary"} /><Typography variant="caption" color="text.secondary">{t(jobStepLabels[job.currentStep] ?? "pipeline.step.queued")} · {job.progress}%</Typography></Stack></TableCell>
         <TableCell><Typography variant="caption">{formatDate(job.createdAt)}</Typography></TableCell>
         <TableCell><Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}><Chip size="small" color={job.status === "failed" ? "error" : job.status === "succeeded" ? "success" : job.status === "running" ? "primary" : "default"} icon={job.status === "succeeded" ? <CheckCircle2 size={13} /> : job.status === "failed" ? <XCircle size={13} /> : <Clock3 size={13} />} label={t(jobStatusLabels[job.status])} />{["queued", "running"].includes(job.status) ? <Tooltip title={t("pipeline.stop")}><IconButton size="small" color="error" onClick={() => { setActionError(false); setPendingAction({ kind: "cancel", job }); }} aria-label={t("pipeline.stop")}><Square size={16} /></IconButton></Tooltip> : <Tooltip title={t("pipeline.delete")}><IconButton size="small" color="error" onClick={() => { setActionError(false); setPendingAction({ kind: "delete", job }); }} aria-label={t("pipeline.delete")}><Trash2 size={16} /></IconButton></Tooltip>}</Stack></TableCell>
       </TableRow>)}

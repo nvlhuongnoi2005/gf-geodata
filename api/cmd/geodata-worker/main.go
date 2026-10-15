@@ -410,18 +410,15 @@ func (w *worker) runJob(ctx context.Context, job *catalog.ConversionJob) error {
 		return err
 	}
 	outputPath := filepath.Join(workspace, "output.mbtiles")
-	stopMonitoring := w.monitorConversionProgress(jobCtx, job)
 	if err := w.converter.Convert(jobCtx, tiling.Request{
 		SourcePath: sourcePath, SourceType: job.SourceFormat, OutputPath: outputPath, Workspace: workspace,
 		MinZoom: job.MinZoom, MaxZoom: job.MaxZoom, LayerName: job.LayerName,
 	}); err != nil {
-		stopMonitoring()
 		if wasCanceled() {
 			return errConversionCanceled
 		}
 		return fmt.Errorf("convert source: %w", err)
 	}
-	stopMonitoring()
 	if wasCanceled() {
 		return errConversionCanceled
 	}
@@ -507,36 +504,6 @@ func (w *worker) updateProgress(parent context.Context, jobID string, progress i
 	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 	return w.store.UpdateConversionProgress(ctx, jobID, progress, step)
-}
-
-// Tilemaker does not emit a stable machine-readable percent. During its long
-// conversion phase, derive a bounded estimate from prior comparable jobs. The
-// UI receives no estimate at all until enough historical data exists.
-func (w *worker) monitorConversionProgress(parent context.Context, job *catalog.ConversionJob) func() {
-	ctx, cancel := context.WithCancel(parent)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if job.EstimatedSeconds == nil || *job.EstimatedSeconds < 1 || job.StartedAt == nil {
-					continue
-				}
-				elapsed := time.Since(*job.StartedAt).Seconds()
-				ratio := elapsed / float64(*job.EstimatedSeconds)
-				progress := min(85, 20+int(65*ratio))
-				if progress > 20 {
-					_ = w.updateProgress(ctx, job.ID, progress, "converting")
-				}
-			}
-		}
-	}()
-	return func() { cancel(); <-done }
 }
 
 func (w *worker) download(ctx context.Context, objectKey, destination string) error {

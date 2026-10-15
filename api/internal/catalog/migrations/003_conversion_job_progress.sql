@@ -1,7 +1,6 @@
 ALTER TABLE conversion_jobs
   ADD COLUMN IF NOT EXISTS progress SMALLINT NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
-  ADD COLUMN IF NOT EXISTS current_step VARCHAR(32) NOT NULL DEFAULT 'queued',
-  ADD COLUMN IF NOT EXISTS estimated_duration_seconds INTEGER CHECK (estimated_duration_seconds IS NULL OR estimated_duration_seconds > 0);
+  ADD COLUMN IF NOT EXISTS current_step VARCHAR(32) NOT NULL DEFAULT 'queued';
 
 UPDATE conversion_jobs
 SET progress = CASE

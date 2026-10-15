@@ -47,7 +47,6 @@ type Release = {
   slug: string;
   description: string;
   releaseNotes: string;
-  visibility: "public" | "authenticated" | "restricted";
   status: ReleaseStatus;
   createdAt: string;
   updatedAt: string;
@@ -77,7 +76,6 @@ export function ReleasesPage() {
   const [version, setVersion] = useState("1.0.0");
   const [description, setDescription] = useState("");
   const [releaseNotes, setReleaseNotes] = useState("");
-  const [visibility, setVisibility] = useState<Release["visibility"]>("authenticated");
   const [artifactIDs, setArtifactIDs] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -144,7 +142,6 @@ export function ReleasesPage() {
     setVersion("1.0.0");
     setDescription("");
     setReleaseNotes("");
-    setVisibility("authenticated");
     setArtifactIDs(artifacts[0] ? [artifacts[0].id] : []);
     setError("");
     setCreateOpen(true);
@@ -176,7 +173,6 @@ export function ReleasesPage() {
           version,
           description: description.trim(),
           releaseNotes: releaseNotes.trim(),
-          visibility,
           artifactIds: artifactIDs,
         }),
       },
@@ -209,9 +205,6 @@ export function ReleasesPage() {
           <Typography variant="h4" sx={{ fontWeight: 750 }}>
             {t("release.title")}
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            {t("release.versionHelp")}
-          </Typography>
         </Box>
         <Button
           variant="contained"
@@ -236,7 +229,6 @@ export function ReleasesPage() {
               <TableCell>{t("release.mapName")}</TableCell>
               <TableCell>{t("release.mapCode")}</TableCell>
               <TableCell>{t("release.version")}</TableCell>
-              <TableCell>{t("release.visibility")}</TableCell>
               <TableCell>{t("release.status")}</TableCell>
               <TableCell align="right">{t("release.actions")}</TableCell>
             </TableRow>
@@ -244,7 +236,7 @@ export function ReleasesPage() {
           <TableBody>
             {!releases.length && (
               <TableRow>
-                <TableCell colSpan={6} align="center" sx={{ py: 5 }}>
+                <TableCell colSpan={5} align="center" sx={{ py: 5 }}>
                   {t("release.empty")}
                 </TableCell>
               </TableRow>
@@ -275,7 +267,6 @@ export function ReleasesPage() {
                     variant="outlined"
                   />
                 </TableCell>
-                <TableCell>{visibilityLabel(release.visibility, t)}</TableCell>
                 <TableCell>
                   <Chip
                     size="small"
@@ -364,7 +355,6 @@ export function ReleasesPage() {
               label={t("release.version")}
               value={version}
               onChange={(event) => setVersion(event.target.value)}
-              helperText={t("release.versionHelp")}
               required
             />
             <TextField
@@ -412,18 +402,6 @@ export function ReleasesPage() {
               <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75 }}>
                 {t("release.artifactHint")}
               </Typography>
-            </FormControl>
-            <FormControl fullWidth size="small">
-              <InputLabel>{t("release.visibility")}</InputLabel>
-              <Select
-                value={visibility}
-                label={t("release.visibility")}
-                onChange={(event) => setVisibility(event.target.value as Release["visibility"])}
-              >
-                <MenuItem value="public">{t("release.visibilityPublic")}</MenuItem>
-                <MenuItem value="authenticated">{t("release.visibilityAuthenticated")}</MenuItem>
-                <MenuItem value="restricted">{t("release.visibilityRestricted")}</MenuItem>
-              </Select>
             </FormControl>
           </Stack>
         </DialogContent>
@@ -488,23 +466,4 @@ function statusLabel(
   ) => string
 ) {
   return t(`release.${status}`);
-}
-function visibilityLabel(
-  visibility: Release["visibility"],
-  t: (
-    key:
-      | "release.visibilityPublic"
-      | "release.visibilityAuthenticated"
-      | "release.visibilityRestricted"
-  ) => string
-) {
-  const labels: Record<
-    Release["visibility"],
-    "release.visibilityPublic" | "release.visibilityAuthenticated" | "release.visibilityRestricted"
-  > = {
-    public: "release.visibilityPublic",
-    authenticated: "release.visibilityAuthenticated",
-    restricted: "release.visibilityRestricted",
-  };
-  return t(labels[visibility]);
 }

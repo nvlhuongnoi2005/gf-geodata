@@ -29,6 +29,14 @@ catalog transition rather than a second full-object transfer. The gateway
 continues to enforce GeoData access control, while its hot path proxies
 TileServer's local MBTiles read rather than issuing an S3 request per tile.
 
+## Access policy
+
+Publishing only makes the map version available to the catalog. Its viewing
+policy is set afterward in Access control: choose **Public**, with no
+recipient, or choose named WebGIS users and organisations. A draft starts
+restricted; changing to Public replaces named grants, and adding a named grant
+replaces a previous Public policy.
+
 ## Map access grants
 
 GeoData treats WebGIS as the identity authority. It has no users or groups

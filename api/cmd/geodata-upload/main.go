@@ -45,7 +45,6 @@ type createReleaseRequest struct {
 	Version      string   `json:"version"`
 	Description  string   `json:"description"`
 	ReleaseNotes string   `json:"releaseNotes"`
-	Visibility   string   `json:"visibility"`
 	ArtifactIDs  []string `json:"artifactIds"`
 }
 type releaseListResponse struct {
@@ -400,7 +399,7 @@ func (s *server) createRelease(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
-	if d.Decode(&request) != nil || strings.TrimSpace(request.Name) == "" || !validVersion(request.Version) || len(request.Description) > 2000 || len(request.ReleaseNotes) > 4000 || len(request.ArtifactIDs) == 0 || len(request.ArtifactIDs) > 20 || (request.Visibility != "public" && request.Visibility != "authenticated" && request.Visibility != "restricted") {
+	if d.Decode(&request) != nil || strings.TrimSpace(request.Name) == "" || !validVersion(request.Version) || len(request.Description) > 2000 || len(request.ReleaseNotes) > 4000 || len(request.ArtifactIDs) == 0 || len(request.ArtifactIDs) > 20 {
 		http.Error(w, "invalid release request", 400)
 		return
 	}
@@ -446,7 +445,9 @@ func (s *server) createRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor, _ := r.Context().Value(actorContextKey{}).(string)
-	release := catalog.MapRelease{ID: id, Name: strings.TrimSpace(request.Name), MapCode: mapCode, Version: request.Version, Slug: slug, Description: strings.TrimSpace(request.Description), ReleaseNotes: strings.TrimSpace(request.ReleaseNotes), Visibility: request.Visibility, Status: "draft", CreatedBy: actor, CreatedAt: time.Now().UTC()}
+	// Access policy is selected later in Access control. A newly drafted map is
+	// restricted until an administrator makes it public or grants recipients.
+	release := catalog.MapRelease{ID: id, Name: strings.TrimSpace(request.Name), MapCode: mapCode, Version: request.Version, Slug: slug, Description: strings.TrimSpace(request.Description), ReleaseNotes: strings.TrimSpace(request.ReleaseNotes), Visibility: "restricted", Status: "draft", CreatedBy: actor, CreatedAt: time.Now().UTC()}
 	if err = s.store.CreateRelease(ctx, release, request.ArtifactIDs); err != nil {
 		http.Error(w, "could not create release", 409)
 		return
@@ -549,16 +550,17 @@ func (s *server) listDirectorySubjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) listAccessGrants(w http.ResponseWriter, r *http.Request) {
-	if !s.requireDirectory(w) {
-		return
-	}
 	kind := ""
 	if raw := strings.TrimSpace(r.URL.Query().Get("principalType")); raw != "" {
-		var ok bool
-		kind, ok = directoryType(raw)
-		if !ok {
-			http.Error(w, "principalType must be user or organization", http.StatusBadRequest)
-			return
+		if raw != "public" {
+			var ok bool
+			kind, ok = directoryType(raw)
+			if !ok {
+				http.Error(w, "principalType must be public, user, or organization", http.StatusBadRequest)
+				return
+			}
+		} else {
+			kind = "public"
 		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -570,6 +572,14 @@ func (s *server) listAccessGrants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for index := range items {
+		if items[index].PrincipalType == "public" {
+			items[index].SubjectName = "Public"
+			continue
+		}
+		if s.directory == nil {
+			items[index].SubjectName = "Directory unavailable"
+			continue
+		}
 		subject, subjectErr := s.directory.Subject(ctx, items[index].PrincipalType, items[index].PrincipalID)
 		if subjectErr == nil {
 			items[index].SubjectName = subject.Name
@@ -585,9 +595,6 @@ func (s *server) listAccessGrants(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) createAccessGrant(w http.ResponseWriter, r *http.Request) {
-	if !s.requireDirectory(w) {
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
 	defer r.Body.Close()
 	var request createAccessGrantRequest
@@ -597,28 +604,43 @@ func (s *server) createAccessGrant(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid access grant request", http.StatusBadRequest)
 		return
 	}
-	kind, ok := directoryType(strings.TrimSpace(request.PrincipalType))
-	if !ok || !isUUID(strings.TrimSpace(request.ReleaseID)) || (request.Scope != "view" && request.Scope != "export") || len(request.Note) > 2000 {
+	kind := strings.TrimSpace(request.PrincipalType)
+	if !isUUID(strings.TrimSpace(request.ReleaseID)) || (request.Scope != "view" && request.Scope != "export") || len(request.Note) > 2000 {
 		http.Error(w, "invalid access grant request", http.StatusBadRequest)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	subject, err := s.directory.Subject(ctx, kind, request.PrincipalID)
-	if errors.Is(err, directory.ErrNotFound) {
-		http.Error(w, "WebGIS user or organization is unavailable", http.StatusBadRequest)
-		return
-	}
-	if err != nil {
-		slog.Error("verify WebGIS directory subject", "error", err)
-		http.Error(w, "could not verify WebGIS identity", http.StatusServiceUnavailable)
-		return
-	}
 	actor, _ := r.Context().Value(actorContextKey{}).(string)
-	grant, err := s.store.CreateAccessGrant(ctx, catalog.AccessGrant{
-		PrincipalType: kind, PrincipalID: subject.ID, ReleaseID: request.ReleaseID,
-		Scope: request.Scope, Note: strings.TrimSpace(request.Note), CreatedBy: actor,
-	})
+	grantInput := catalog.AccessGrant{PrincipalType: kind, ReleaseID: request.ReleaseID, Scope: request.Scope, Note: strings.TrimSpace(request.Note), CreatedBy: actor}
+	var subject directory.Subject
+	if kind == "public" {
+		grantInput.PrincipalID = "*"
+		grantInput.Scope = "view"
+	} else {
+		resolvedKind, ok := directoryType(kind)
+		if !ok || !s.requireDirectory(w) {
+			if !ok {
+				http.Error(w, "principalType must be public, user, or organization", http.StatusBadRequest)
+			}
+			return
+		}
+		kind = resolvedKind
+		grantInput.PrincipalType = kind
+		var err error
+		subject, err = s.directory.Subject(ctx, kind, request.PrincipalID)
+		if errors.Is(err, directory.ErrNotFound) {
+			http.Error(w, "WebGIS user or organization is unavailable", http.StatusBadRequest)
+			return
+		}
+		if err != nil {
+			slog.Error("verify WebGIS directory subject", "error", err)
+			http.Error(w, "could not verify WebGIS identity", http.StatusServiceUnavailable)
+			return
+		}
+		grantInput.PrincipalID = subject.ID
+	}
+	grant, err := s.store.CreateAccessGrant(ctx, grantInput)
 	if errors.Is(err, catalog.ErrAccessGrantNotFound) {
 		http.Error(w, "release does not exist or this access grant already exists", http.StatusConflict)
 		return
@@ -628,16 +650,17 @@ func (s *server) createAccessGrant(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not create access grant", http.StatusServiceUnavailable)
 		return
 	}
-	grant.SubjectName, grant.Organization = subject.Name, subject.Organization
+	if grant.PrincipalType == "public" {
+		grant.SubjectName = "Public"
+	} else {
+		grant.SubjectName, grant.Organization = subject.Name, subject.Organization
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(grant)
 }
 
 func (s *server) revokeAccessGrant(w http.ResponseWriter, r *http.Request) {
-	if !s.requireDirectory(w) {
-		return
-	}
 	id := r.PathValue("grantID")
 	if !isUUID(id) {
 		http.Error(w, "invalid access grant identifier", http.StatusBadRequest)

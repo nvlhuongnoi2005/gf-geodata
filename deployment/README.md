@@ -259,7 +259,8 @@ kubectl -n tile-server rollout status deployment/geodata-tile-gateway --timeout=
 The cache warmer's service account can only `get` and `patch` the one
 `webgis/tile-server` Deployment; the patch changes a pod-template annotation
 after a new MBTiles file is atomically placed, forcing TileServer to rebuild
-its otherwise startup-only catalog. Apply migration `009_artifact_cache_ready.sql`
+its otherwise startup-only catalog. Apply migrations
+`009_artifact_cache_ready.sql` and `010_access_policy_and_cache_retry.sql`
 before rolling these workloads.
 
 On the current one-node WebGIS setup, `tile-data` is a `ReadWriteOnce` PVC and
