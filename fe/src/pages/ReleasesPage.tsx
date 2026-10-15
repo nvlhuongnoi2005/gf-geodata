@@ -352,7 +352,7 @@ export function ReleasesPage() {
                     )}
                     {release.status === "published" && (
                       <>
-                        <Button size="small" startIcon={<Eye size={15} />} onClick={() => setPreviewRelease(release)}>
+                        <Button size="small" startIcon={<Eye size={15} />} onClick={(event) => { event.currentTarget.blur(); setPreviewRelease(release); }}>
                           {t("release.preview")}
                         </Button>
                         <Button
