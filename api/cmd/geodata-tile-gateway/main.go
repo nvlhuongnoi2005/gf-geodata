@@ -32,6 +32,7 @@ type gateway struct {
 	store            *catalog.Store
 	s3               *s3.Client
 	bucket           string
+	styleBucket      string
 	tileStoreRoot    string
 	tileServerURL    string
 	httpClient       *http.Client
@@ -80,11 +81,13 @@ func main() {
 		}
 		objectStore = s3.NewFromConfig(cfg, func(o *s3.Options) { o.BaseEndpoint = aws.String(endpoint); o.UsePathStyle = true })
 	}
-	g := &gateway{store: store, s3: objectStore, bucket: env("S3_PUBLISHED_BUCKET", "geodata-published"), tileStoreRoot: required("MBTILES_STORE_ROOT"), tileServerURL: strings.TrimRight(env("TILE_SERVER_INTERNAL_URL", ""), "/"), httpClient: &http.Client{Timeout: 10 * time.Second}, keys: keys, issuer: required("AUTH_ISSUER"), audience: required("AUTH_AUDIENCE"), adminRole: env("AUTH_ADMIN_ROLE", "admin"), directory: webgisDirectory, readers: map[string]*mbtiles.Reader{}}
+	g := &gateway{store: store, s3: objectStore, bucket: env("S3_PUBLISHED_BUCKET", "geodata-published"), styleBucket: env("S3_DERIVED_BUCKET", "geodata-derived"), tileStoreRoot: required("MBTILES_STORE_ROOT"), tileServerURL: strings.TrimRight(env("TILE_SERVER_INTERNAL_URL", ""), "/"), httpClient: &http.Client{Timeout: 10 * time.Second}, keys: keys, issuer: required("AUTH_ISSUER"), audience: required("AUTH_AUDIENCE"), adminRole: env("AUTH_ADMIN_ROLE", "admin"), directory: webgisDirectory, readers: map[string]*mbtiles.Reader{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", g.health)
 	mux.HandleFunc("GET /v1/releases/{slug}/tilejson/{artifactID}", g.tileJSON)
 	mux.HandleFunc("GET /v1/releases/{slug}/tiles/{artifactID}/{z}/{x}/{y}", g.tile)
+	mux.HandleFunc("GET /v1/releases/{slug}/style.json", g.style)
+	mux.HandleFunc("GET /v1/releases/{slug}/sprites/{styleID}/{name}", g.sprite)
 	log.Fatal(http.ListenAndServe(env("HTTP_ADDR", ":8091"), mux))
 }
 func (g *gateway) health(w http.ResponseWriter, r *http.Request) {
@@ -209,6 +212,99 @@ func (g *gateway) tileJSON(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.NotFound(w, r)
+}
+
+// style resolves a stored style against the selected release. A source such
+// as mbtiles://vietnam is an import-time placeholder; it becomes the release's
+// private TileJSON endpoint here, so a browser never learns an S3 key or a
+// filesystem path. Existing releases without a style continue using the UI's
+// automatic fallback style.
+func (g *gateway) style(w http.ResponseWriter, r *http.Request) {
+	release, artifacts, ok := g.release(w, r)
+	if !ok {
+		return
+	}
+	style, err := g.store.StyleForRelease(r.Context(), release.ID)
+	if err != nil {
+		log.Printf("load release style %s: %v", release.ID, err)
+		http.Error(w, "style is temporarily unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if style == nil || len(artifacts) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+	var document map[string]any
+	if json.Unmarshal(style.Document, &document) != nil {
+		http.Error(w, "stored style is invalid", http.StatusInternalServerError)
+		return
+	}
+	if sources, valid := document["sources"].(map[string]any); valid {
+		for _, sourceValue := range sources {
+			source, valid := sourceValue.(map[string]any)
+			if !valid {
+				continue
+			}
+			if sourceURL, valid := source["url"].(string); valid && strings.HasPrefix(strings.ToLower(sourceURL), "mbtiles://") {
+				source["url"] = "/tiles/v1/releases/" + release.Slug + "/tilejson/" + artifacts[0].ArtifactID
+			}
+		}
+	}
+	if style.HasSprite {
+		document["sprite"] = "/tiles/v1/releases/" + release.Slug + "/sprites/" + style.ID + "/sprite"
+	} else {
+		delete(document, "sprite")
+	}
+	// The supplied OpenStreetMap style references fonts://. No glyph PBF files
+	// accompanied it, so do not leave a custom protocol URL which would make
+	// MapLibre fail. Symbols without glyphs are simply omitted until a verified
+	// font package is imported in a later style version.
+	if !style.HasGlyphs {
+		delete(document, "glyphs")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	setTileCacheControl(w, release)
+	_ = json.NewEncoder(w).Encode(document)
+}
+
+func (g *gateway) sprite(w http.ResponseWriter, r *http.Request) {
+	release, _, ok := g.release(w, r)
+	if !ok {
+		return
+	}
+	style, err := g.store.StyleForRelease(r.Context(), release.ID)
+	if err != nil {
+		http.Error(w, "style is temporarily unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if style == nil || !style.HasSprite || style.ID != r.PathValue("styleID") {
+		http.NotFound(w, r)
+		return
+	}
+	name := r.PathValue("name")
+	contentType := ""
+	switch name {
+	case "sprite.json", "sprite@2x.json":
+		contentType = "application/json"
+	case "sprite.png", "sprite@2x.png":
+		contentType = "image/png"
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	if g.s3 == nil {
+		http.Error(w, "style storage is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	object, err := g.s3.GetObject(r.Context(), &s3.GetObjectInput{Bucket: aws.String(g.styleBucket), Key: aws.String("styles/" + style.ID + "/" + name)})
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer object.Body.Close()
+	w.Header().Set("Content-Type", contentType)
+	setTileCacheControl(w, release)
+	_, _ = io.Copy(w, object.Body)
 }
 func (g *gateway) tile(w http.ResponseWriter, r *http.Request) {
 	release, arts, ok := g.release(w, r)

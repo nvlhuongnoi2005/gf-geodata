@@ -331,6 +331,18 @@
   "release.importStart": "Import data",
   "release.importing": "Uploading file: {{progress}}%",
   "release.errorImport": "Could not import the MBTiles file.",
+  "release.importStyle": "Import style",
+  "release.importStyleTitle": "Import a MapLibre style",
+  "release.importStyleDescription": "The style version is immutable. Its MBTiles source placeholder is resolved only when a release is published.",
+  "release.styleName": "Style name",
+  "release.spriteFiles": "Sprite files (optional, but upload each JSON/PNG pair together)",
+  "release.styleGlyphNotice": "This style uses custom font glyphs. No glyph PBF files were found, so text labels will be omitted until fonts are imported.",
+  "release.styleSpritePairRequired": "Each sprite scale requires both its JSON and PNG file.",
+  "release.importStyleStart": "Import style",
+  "release.errorStyleImport": "Could not import the style.",
+  "release.styleVersion": "Map style",
+  "release.styleAutomatic": "Automatic preview style",
+  "release.withSprite": "with sprite",
   "styles.comingSoonTitle": "Style Studio is coming soon",
   "styles.comingSoonDescription": "The style-design tool will return after map publishing and access control workflows are stable."
 }

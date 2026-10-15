@@ -57,7 +57,7 @@ $geodataS3Config = @{
       name = 'geodata-gateway'
       credentials = @(@{ accessKey = $geodataGatewayKey; secretKey = $geodataGatewaySecret })
       actions = @('Read', 'List')
-      resources = @('buckets/geodata-published/')
+      resources = @('buckets/geodata-published/', 'buckets/geodata-derived/')
     },
     @{
       name = 'geodata-worker'

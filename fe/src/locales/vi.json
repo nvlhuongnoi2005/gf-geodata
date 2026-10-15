@@ -331,6 +331,18 @@
   "release.importStart": "Nhập dữ liệu",
   "release.importing": "Đang tải tệp lên: {{progress}}%",
   "release.errorImport": "Không thể nhập tệp MBTiles.",
+  "release.importStyle": "Nhập style",
+  "release.importStyleTitle": "Nhập style MapLibre",
+  "release.importStyleDescription": "Phiên bản style là bất biến. Nguồn MBTiles trong style chỉ được thay bằng dữ liệu của bản phát hành khi xuất bản.",
+  "release.styleName": "Tên style",
+  "release.spriteFiles": "Tệp sprite (không bắt buộc, nhưng mỗi mức phải có đủ cặp JSON và PNG)",
+  "release.styleGlyphNotice": "Style này dùng font glyph tùy chỉnh. Chưa tìm thấy tệp glyph PBF nên các nhãn chữ sẽ chưa hiển thị cho đến khi nhập font.",
+  "release.styleSpritePairRequired": "Mỗi mức sprite phải có cả tệp JSON và PNG.",
+  "release.importStyleStart": "Nhập style",
+  "release.errorStyleImport": "Không thể nhập style.",
+  "release.styleVersion": "Style bản đồ",
+  "release.styleAutomatic": "Style xem trước tự động",
+  "release.withSprite": "có sprite",
   "styles.comingSoonTitle": "Style Studio đang được phát triển",
   "styles.comingSoonDescription": "Công cụ thiết kế style sẽ trở lại sau khi luồng phát hành và phân quyền bản đồ ổn định."
 }

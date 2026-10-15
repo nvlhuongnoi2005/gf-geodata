@@ -253,6 +253,28 @@ kubectl -n tile-server rollout status deployment/geodata-mbtiles-store-warmer --
 kubectl -n tile-server rollout status deployment/geodata-tile-gateway --timeout=5m
 ```
 
+## MapLibre release styles and sprites
+
+Migration `012_release_styles.sql` adds immutable style versions. An
+administrator can import `style.json`, `sprite.json`, `sprite.png`, and their
+optional `@2x` pair from **Map releases**, choose that style while creating a
+draft, then publish normally. The tile gateway replaces an `mbtiles://...`
+source in the stored style with the selected release artifact and streams the
+sprite through the same release authorization policy.
+
+The gateway S3 identity now needs read access to both `geodata-published` and
+`geodata-derived`; run the credential rotation script once before rolling out
+this change. The supplied OpenStreetMap style also references glyph PBF fonts.
+They are not in the provided asset directory, so this first importer preserves
+sprite icons but omits text labels safely until font-package import is added.
+
+```powershell
+& .\deployment\scripts\rotate-geodata-s3-credentials.ps1
+kubectl apply -k deployment
+kubectl -n tile-server rollout status deployment/geodata-upload --timeout=5m
+kubectl -n tile-server rollout status deployment/geodata-tile-gateway --timeout=5m
+```
+
 On the current single-node cluster, `geodata-mbtiles-data` is a 100Gi
 `ReadWriteOnce` PVC. This supports the warmer and gateway pods on that node.
 For multiple nodes, provision an RWX filesystem (for example NFS or CephFS),

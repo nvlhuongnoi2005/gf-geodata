@@ -53,6 +53,13 @@ type Release = {
   createdAt: string;
   updatedAt: string;
   artifactIds: string[];
+  styleVersionId?: string;
+};
+type StyleVersion = {
+  id: string;
+  name: string;
+  hasSprite: boolean;
+  hasGlyphs: boolean;
 };
 
 const apiRoot = "/api/geodata/v1";
@@ -71,8 +78,10 @@ export function ReleasesPage() {
   const { t } = useI18n();
   const [releases, setReleases] = useState<Release[]>([]);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [styles, setStyles] = useState<StyleVersion[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [styleImportOpen, setStyleImportOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Release | null>(null);
   const [previewRelease, setPreviewRelease] = useState<Release | null>(null);
   const [name, setName] = useState("");
@@ -81,12 +90,20 @@ export function ReleasesPage() {
   const [description, setDescription] = useState("");
   const [releaseNotes, setReleaseNotes] = useState("");
   const [artifactIDs, setArtifactIDs] = useState<string[]>([]);
+  const [styleVersionID, setStyleVersionID] = useState("");
   const importFileInputRef = useRef<HTMLInputElement>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importName, setImportName] = useState("");
   const [importDataType, setImportDataType] = useState("");
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
+  const [styleName, setStyleName] = useState("");
+  const [styleFile, setStyleFile] = useState<File | null>(null);
+  const [spriteJSON, setSpriteJSON] = useState<File | null>(null);
+  const [spritePNG, setSpritePNG] = useState<File | null>(null);
+  const [spriteJSON2x, setSpriteJSON2x] = useState<File | null>(null);
+  const [spritePNG2x, setSpritePNG2x] = useState<File | null>(null);
+  const [styleImporting, setStyleImporting] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -94,13 +111,15 @@ export function ReleasesPage() {
     if (!accessToken) return;
     try {
       const headers = { Authorization: `Bearer ${accessToken}` };
-      const [releaseResponse, artifactResponse] = await Promise.all([
+      const [releaseResponse, artifactResponse, styleResponse] = await Promise.all([
         fetch(`${apiRoot}/releases`, { headers }),
         fetch(`${apiRoot}/artifacts`, { headers }),
+        fetch(`${apiRoot}/styles`, { headers }),
       ]);
-      if (!releaseResponse.ok || !artifactResponse.ok) throw new Error(t("release.errorLoad"));
+      if (!releaseResponse.ok || !artifactResponse.ok || !styleResponse.ok) throw new Error(t("release.errorLoad"));
       setReleases(((await releaseResponse.json()) as { items?: Release[] }).items ?? []);
       setArtifacts(((await artifactResponse.json()) as { items?: Artifact[] }).items ?? []);
+      setStyles(((await styleResponse.json()) as { items?: StyleVersion[] }).items ?? []);
       setError("");
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : t("release.errorLoad"));
@@ -164,8 +183,44 @@ export function ReleasesPage() {
     setDescription("");
     setReleaseNotes("");
     setArtifactIDs(readyArtifacts[0] ? [readyArtifacts[0].id] : []);
+    setStyleVersionID("");
     setError("");
     setCreateOpen(true);
+  };
+  const startStyleImport = () => {
+    setStyleName("");
+    setStyleFile(null);
+    setSpriteJSON(null);
+    setSpritePNG(null);
+    setSpriteJSON2x(null);
+    setSpritePNG2x(null);
+    setError("");
+    setStyleImportOpen(true);
+  };
+  const importStyle = async () => {
+    if (!accessToken || !styleFile || !styleName.trim() || styleImporting) return;
+    if (Boolean(spriteJSON) !== Boolean(spritePNG) || Boolean(spriteJSON2x) !== Boolean(spritePNG2x)) {
+      setError(t("release.styleSpritePairRequired"));
+      return;
+    }
+    const form = new FormData();
+    form.set("name", styleName.trim());
+    form.set("style", styleFile);
+    if (spriteJSON) form.set("spriteJson", spriteJSON);
+    if (spritePNG) form.set("spritePng", spritePNG);
+    if (spriteJSON2x) form.set("spriteJson2x", spriteJSON2x);
+    if (spritePNG2x) form.set("spritePng2x", spritePNG2x);
+    setStyleImporting(true);
+    try {
+      const response = await fetch(`${apiRoot}/styles/import`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}` }, body: form });
+      if (!response.ok) throw new Error((await response.text()).trim() || t("release.errorStyleImport"));
+      setStyleImportOpen(false);
+      await load();
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : t("release.errorStyleImport"));
+    } finally {
+      setStyleImporting(false);
+    }
   };
   const startImport = () => {
     setImportFile(null);
@@ -232,6 +287,7 @@ export function ReleasesPage() {
           description: description.trim(),
           releaseNotes: releaseNotes.trim(),
           artifactIds: artifactIDs,
+          styleVersionId: styleVersionID,
         }),
       },
       t("release.errorCreate")
@@ -265,6 +321,9 @@ export function ReleasesPage() {
           </Typography>
         </Box>
         <Stack direction="row" spacing={1}>
+          <Button variant="outlined" startIcon={<FileUp size={16} />} onClick={startStyleImport}>
+            {t("release.importStyle")}
+          </Button>
           <Button variant="outlined" startIcon={<FileUp size={16} />} onClick={startImport}>
             {t("release.importMbtiles")}
           </Button>
@@ -408,6 +467,27 @@ export function ReleasesPage() {
         </DialogActions>
       </Dialog>
 
+      <Dialog open={styleImportOpen} onClose={() => !styleImporting && setStyleImportOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>{t("release.importStyleTitle")}</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2}>
+            <Typography variant="body2" color="text.secondary">{t("release.importStyleDescription")}</Typography>
+            <TextField label={t("release.styleName")} value={styleName} onChange={(event) => setStyleName(event.target.value)} required fullWidth />
+            <TextField label="style.json" type="file" required onChange={(event) => setStyleFile((event.target as HTMLInputElement).files?.[0] ?? null)} slotProps={{ htmlInput: { accept: ".json,application/json" } }} />
+            <Typography variant="subtitle2">{t("release.spriteFiles")}</Typography>
+            <TextField label="sprite.json" type="file" onChange={(event) => setSpriteJSON((event.target as HTMLInputElement).files?.[0] ?? null)} slotProps={{ htmlInput: { accept: ".json,application/json" } }} />
+            <TextField label="sprite.png" type="file" onChange={(event) => setSpritePNG((event.target as HTMLInputElement).files?.[0] ?? null)} slotProps={{ htmlInput: { accept: ".png,image/png" } }} />
+            <TextField label="sprite@2x.json" type="file" onChange={(event) => setSpriteJSON2x((event.target as HTMLInputElement).files?.[0] ?? null)} slotProps={{ htmlInput: { accept: ".json,application/json" } }} />
+            <TextField label="sprite@2x.png" type="file" onChange={(event) => setSpritePNG2x((event.target as HTMLInputElement).files?.[0] ?? null)} slotProps={{ htmlInput: { accept: ".png,image/png" } }} />
+            <Alert severity="info">{t("release.styleGlyphNotice")}</Alert>
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button onClick={() => setStyleImportOpen(false)} disabled={styleImporting}>{t("release.cancel")}</Button>
+          <Button variant="contained" onClick={() => void importStyle()} disabled={!styleFile || !styleName.trim() || styleImporting}>{t("release.importStyleStart")}</Button>
+        </DialogActions>
+      </Dialog>
+
       <Dialog
         open={createOpen}
         onClose={() => !saving && setCreateOpen(false)}
@@ -470,6 +550,10 @@ export function ReleasesPage() {
               minRows={2}
               slotProps={{ htmlInput: { maxLength: 4000 } }}
             />
+            <TextField select label={t("release.styleVersion")} value={styleVersionID} onChange={(event) => setStyleVersionID(event.target.value)} fullWidth>
+              <MenuItem value="">{t("release.styleAutomatic")}</MenuItem>
+              {styles.map((style) => <MenuItem key={style.id} value={style.id}>{style.name}{style.hasSprite ? ` · ${t("release.withSprite")}` : ""}</MenuItem>)}
+            </TextField>
             <FormControl fullWidth size="small">
               <InputLabel>{t("release.artifacts")}</InputLabel>
               <Select

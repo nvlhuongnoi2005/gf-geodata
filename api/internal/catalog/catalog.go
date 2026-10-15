@@ -127,20 +127,32 @@ type CacheArtifact struct {
 }
 
 type MapRelease struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	MapCode      string     `json:"mapCode"`
-	Version      string     `json:"version"`
-	Slug         string     `json:"slug"`
-	Description  string     `json:"description"`
-	ReleaseNotes string     `json:"releaseNotes"`
-	Visibility   string     `json:"visibility"`
-	Status       string     `json:"status"`
-	CreatedBy    string     `json:"-"`
-	CreatedAt    time.Time  `json:"createdAt"`
-	UpdatedAt    time.Time  `json:"updatedAt"`
-	PublishedAt  *time.Time `json:"publishedAt"`
-	ArtifactIDs  []string   `json:"artifactIds"`
+	ID             string     `json:"id"`
+	Name           string     `json:"name"`
+	MapCode        string     `json:"mapCode"`
+	Version        string     `json:"version"`
+	Slug           string     `json:"slug"`
+	Description    string     `json:"description"`
+	ReleaseNotes   string     `json:"releaseNotes"`
+	Visibility     string     `json:"visibility"`
+	Status         string     `json:"status"`
+	CreatedBy      string     `json:"-"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+	PublishedAt    *time.Time `json:"publishedAt"`
+	ArtifactIDs    []string   `json:"artifactIds"`
+	StyleVersionID string     `json:"styleVersionId,omitempty"`
+}
+
+// StyleVersion is a server-owned, immutable MapLibre style. The document and
+// auxiliary assets must only be served through the authenticated tile gateway.
+type StyleVersion struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Document  json.RawMessage `json:"document,omitempty"`
+	HasSprite bool            `json:"hasSprite"`
+	HasGlyphs bool            `json:"hasGlyphs"`
+	CreatedAt time.Time       `json:"createdAt"`
 }
 
 // AccessGrant references an identity owned by WebGIS. The catalog never
@@ -521,7 +533,7 @@ func (s *Store) CreateRelease(ctx context.Context, release MapRelease, artifactI
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err = tx.Exec(ctx, `INSERT INTO map_releases (id,name,map_code,version,slug,description,release_notes,visibility,created_by,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,$10)`, release.ID, release.Name, release.MapCode, release.Version, release.Slug, release.Description, release.ReleaseNotes, release.Visibility, release.CreatedBy, release.CreatedAt); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO map_releases (id,name,map_code,version,slug,description,release_notes,visibility,style_version_id,created_by,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::uuid,NULLIF($10,''),$11,$11)`, release.ID, release.Name, release.MapCode, release.Version, release.Slug, release.Description, release.ReleaseNotes, release.Visibility, release.StyleVersionID, release.CreatedBy, release.CreatedAt); err != nil {
 		return err
 	}
 	for _, id := range artifactIDs {
@@ -542,7 +554,7 @@ WHERE id=$2 AND status='succeeded' AND output_object_key IS NOT NULL
 }
 
 func (s *Store) ListReleases(ctx context.Context, limit int) ([]MapRelease, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,name,map_code,version,slug,description,release_notes,visibility,status,created_at,updated_at,published_at FROM map_releases ORDER BY updated_at DESC LIMIT $1`, limit)
+	rows, err := s.pool.Query(ctx, `SELECT id,name,map_code,version,slug,description,release_notes,visibility,status,created_at,updated_at,published_at,COALESCE(style_version_id::text,'') FROM map_releases ORDER BY updated_at DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -550,7 +562,7 @@ func (s *Store) ListReleases(ctx context.Context, limit int) ([]MapRelease, erro
 	items := []MapRelease{}
 	for rows.Next() {
 		var item MapRelease
-		if err := rows.Scan(&item.ID, &item.Name, &item.MapCode, &item.Version, &item.Slug, &item.Description, &item.ReleaseNotes, &item.Visibility, &item.Status, &item.CreatedAt, &item.UpdatedAt, &item.PublishedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.MapCode, &item.Version, &item.Slug, &item.Description, &item.ReleaseNotes, &item.Visibility, &item.Status, &item.CreatedAt, &item.UpdatedAt, &item.PublishedAt, &item.StyleVersionID); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -562,6 +574,43 @@ func (s *Store) ListReleases(ctx context.Context, limit int) ([]MapRelease, erro
 		return nil, err
 	}
 	return items, nil
+}
+
+func (s *Store) CreateStyleVersion(ctx context.Context, style StyleVersion, createdBy string) error {
+	_, err := s.pool.Exec(ctx, `INSERT INTO style_versions (id,name,document,has_sprite,has_glyphs,created_by,created_at) VALUES ($1,$2,$3::jsonb,$4,$5,NULLIF($6,''),$7)`, style.ID, style.Name, string(style.Document), style.HasSprite, style.HasGlyphs, createdBy, style.CreatedAt)
+	return err
+}
+
+func (s *Store) ListStyleVersions(ctx context.Context, limit int) ([]StyleVersion, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id::text,name,has_sprite,has_glyphs,created_at FROM style_versions ORDER BY created_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StyleVersion{}
+	for rows.Next() {
+		var item StyleVersion
+		if err := rows.Scan(&item.ID, &item.Name, &item.HasSprite, &item.HasGlyphs, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// StyleForRelease returns the immutable document selected for a published
+// release. A nil result means this legacy release uses the automatic preview
+// style and not an error.
+func (s *Store) StyleForRelease(ctx context.Context, releaseID string) (*StyleVersion, error) {
+	var item StyleVersion
+	err := s.pool.QueryRow(ctx, `SELECT s.id::text,s.name,s.document::text,s.has_sprite,s.has_glyphs,s.created_at FROM map_releases r JOIN style_versions s ON s.id=r.style_version_id WHERE r.id=$1`, releaseID).Scan(&item.ID, &item.Name, &item.Document, &item.HasSprite, &item.HasGlyphs, &item.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
 }
 
 func (s *Store) populateReleaseArtifactIDs(ctx context.Context, releases []MapRelease) error {
@@ -805,7 +854,7 @@ func (s *Store) ClaimReleasePublish(ctx context.Context) (*MapRelease, []Release
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var release MapRelease
-	err = tx.QueryRow(ctx, `SELECT id,name,map_code,version,slug,description,release_notes,visibility,status,created_at,updated_at,published_at FROM map_releases WHERE status='publishing' ORDER BY updated_at FOR UPDATE SKIP LOCKED LIMIT 1`).Scan(&release.ID, &release.Name, &release.MapCode, &release.Version, &release.Slug, &release.Description, &release.ReleaseNotes, &release.Visibility, &release.Status, &release.CreatedAt, &release.UpdatedAt, &release.PublishedAt)
+	err = tx.QueryRow(ctx, `SELECT id,name,map_code,version,slug,description,release_notes,visibility,status,created_at,updated_at,published_at,COALESCE(style_version_id::text,'') FROM map_releases WHERE status='publishing' ORDER BY updated_at FOR UPDATE SKIP LOCKED LIMIT 1`).Scan(&release.ID, &release.Name, &release.MapCode, &release.Version, &release.Slug, &release.Description, &release.ReleaseNotes, &release.Visibility, &release.Status, &release.CreatedAt, &release.UpdatedAt, &release.PublishedAt, &release.StyleVersionID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil, tx.Commit(ctx)
 	}
@@ -861,7 +910,7 @@ func (s *Store) FailReleasePublish(ctx context.Context, id, message string) erro
 
 func (s *Store) PublishedRelease(ctx context.Context, slug string) (MapRelease, []ReleaseArtifact, error) {
 	var release MapRelease
-	err := s.pool.QueryRow(ctx, `SELECT id,name,map_code,version,slug,description,release_notes,visibility,status,created_at,updated_at,published_at FROM map_releases WHERE slug=$1 AND status='published'`, slug).Scan(&release.ID, &release.Name, &release.MapCode, &release.Version, &release.Slug, &release.Description, &release.ReleaseNotes, &release.Visibility, &release.Status, &release.CreatedAt, &release.UpdatedAt, &release.PublishedAt)
+	err := s.pool.QueryRow(ctx, `SELECT id,name,map_code,version,slug,description,release_notes,visibility,status,created_at,updated_at,published_at,COALESCE(style_version_id::text,'') FROM map_releases WHERE slug=$1 AND status='published'`, slug).Scan(&release.ID, &release.Name, &release.MapCode, &release.Version, &release.Slug, &release.Description, &release.ReleaseNotes, &release.Visibility, &release.Status, &release.CreatedAt, &release.UpdatedAt, &release.PublishedAt, &release.StyleVersionID)
 	if err != nil {
 		return MapRelease{}, nil, err
 	}

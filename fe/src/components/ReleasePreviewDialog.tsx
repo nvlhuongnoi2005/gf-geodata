@@ -18,6 +18,7 @@ export type PreviewRelease = {
   slug: string;
   version: string;
   artifactIds: string[];
+  styleVersionId?: string;
 };
 
 function styleForRelease(tileJSONs: TileJSON[]): StyleSpecification {
@@ -78,10 +79,16 @@ export function ReleasePreviewDialog({ release, accessToken, onClose }: { releas
           if (!response.ok) throw new Error("preview unavailable");
           return { ...(await response.json() as TileJSON), url };
         }));
+        let releaseStyle: StyleSpecification | undefined;
+        if (release.styleVersionId) {
+          const response = await fetch(`/tiles/v1/releases/${release.slug}/style.json`, { headers: { Authorization: `Bearer ${accessToken}` } });
+          if (!response.ok) throw new Error("release style unavailable");
+          releaseStyle = await response.json() as StyleSpecification;
+        }
         if (disposed) return;
         const instance = new Map({
           container: mapNode,
-          style: styleForRelease(tileJSONs),
+          style: releaseStyle ?? styleForRelease(tileJSONs),
           bounds: previewBounds(tileJSONs),
           fitBoundsOptions: { padding: 44, maxZoom: Math.min(...tileJSONs.map((item) => item.maxzoom), 14) },
           transformRequest: (url) => url.startsWith("/tiles/") ? { url, headers: { Authorization: `Bearer ${accessToken}` } } : { url },
