@@ -21,7 +21,3 @@ BEGIN
       CHECK (warm_status IN ('not_required', 'pending', 'ready', 'failed'));
   END IF;
 END $$;
-
-CREATE UNIQUE INDEX IF NOT EXISTS map_release_artifacts_tile_server_dataset_unique
-  ON map_release_artifacts(tile_server_dataset)
-  WHERE tile_server_dataset IS NOT NULL;
