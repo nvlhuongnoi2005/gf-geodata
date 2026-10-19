@@ -127,10 +127,9 @@ export function PipelinePage() {
     }
     setLoadError(false);
     try {
-      const headers = { Authorization: `Bearer ${accessToken}` };
       const [sourceResponse, jobResponse] = await Promise.all([
-        authenticatedFetch("/api/geodata/v1/uploads?limit=100", { headers }),
-        authenticatedFetch("/api/geodata/v1/jobs?limit=100", { headers }),
+        authenticatedFetch("/api/geodata/v1/uploads?limit=100"),
+        authenticatedFetch("/api/geodata/v1/jobs?limit=100"),
       ]);
       if (!sourceResponse.ok || !jobResponse.ok) throw new Error("Could not load conversion data");
       const sourceBody = (await sourceResponse.json()) as { items?: RawUpload[] };
@@ -142,7 +141,7 @@ export function PipelinePage() {
     } finally {
       setLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, authenticatedFetch]);
 
   useEffect(() => {
     void loadData();
@@ -182,7 +181,7 @@ export function PipelinePage() {
     try {
       const response = await authenticatedFetch("/api/geodata/v1/jobs", {
         method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           rawUploadId: sourceID,
           minZoom: min,
@@ -209,10 +208,7 @@ export function PipelinePage() {
         kind === "cancel"
           ? `/api/geodata/v1/jobs/${job.id}/cancel`
           : `/api/geodata/v1/jobs/${job.id}`,
-        {
-          method: kind === "cancel" ? "POST" : "DELETE",
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }
+        { method: kind === "cancel" ? "POST" : "DELETE" }
       );
       if (!response.ok) throw new Error("Could not update conversion task");
       setPendingAction(null);

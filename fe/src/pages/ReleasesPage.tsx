@@ -158,11 +158,10 @@ export function ReleasesPage() {
   const load = async () => {
     if (!accessToken) return;
     try {
-      const headers = { Authorization: `Bearer ${accessToken}` };
       const [releaseResponse, artifactResponse, styleResponse] = await Promise.all([
-        authenticatedFetch(`${apiRoot}/releases`, { headers }),
-        authenticatedFetch(`${apiRoot}/artifacts`, { headers }),
-        authenticatedFetch(`${apiRoot}/styles`, { headers }),
+        authenticatedFetch(`${apiRoot}/releases`),
+        authenticatedFetch(`${apiRoot}/artifacts`),
+        authenticatedFetch(`${apiRoot}/styles`),
       ]);
       if (!releaseResponse.ok || !artifactResponse.ok || !styleResponse.ok)
         throw new Error(t("release.errorLoad"));
@@ -207,10 +206,7 @@ export function ReleasesPage() {
     if (!accessToken) return false;
     setSaving(true);
     try {
-      const response = await authenticatedFetch(path, {
-        ...options,
-        headers: { Authorization: `Bearer ${accessToken}`, ...options.headers },
-      });
+      const response = await authenticatedFetch(path, options);
       if (!response.ok) {
         const detail = (await response.text()).trim();
         if (response.status === 409) {

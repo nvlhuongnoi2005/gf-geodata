@@ -11,7 +11,7 @@ import {
   Typography,
 } from "@mui/material";
 import { X } from "lucide-react";
-import { Map, NavigationControl, type StyleSpecification } from "maplibre-gl";
+import type { Map as MapLibreMap, StyleSpecification } from "maplibre-gl";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 
@@ -104,7 +104,7 @@ export function ReleasePreviewDialog({
   const { t } = useI18n();
   const { authenticatedFetch } = useAuth();
   const [mapNode, setMapNode] = useState<HTMLDivElement | null>(null);
-  const map = useRef<Map | null>(null);
+  const map = useRef<MapLibreMap | null>(null);
   const [error, setError] = useState(false);
   const [ready, setReady] = useState(false);
 
@@ -132,6 +132,8 @@ export function ReleasePreviewDialog({
           if (!response.ok) throw new Error("release style unavailable");
           releaseStyle = (await response.json()) as StyleSpecification;
         }
+        if (disposed) return;
+        const { Map, NavigationControl } = await import("maplibre-gl");
         if (disposed) return;
         const instance = new Map({
           container: mapNode,

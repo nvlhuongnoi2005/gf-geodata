@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { lazy, Suspense, useState, type FormEvent, type ReactNode } from "react";
 import {
   AppBar,
   Avatar,
@@ -50,14 +50,24 @@ import { useAuth, type LoginFailureReason } from "../auth";
 import { useI18n, type TranslationKey } from "../i18n";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { ThemeModeSwitcher } from "./AppearanceControls";
-import { DashboardPage } from "../pages/DashboardPage";
-import { DatasetsPage } from "../pages/DatasetsPage";
-import { PipelinePage } from "../pages/PipelinePage";
-import { ReleasesPage } from "../pages/ReleasesPage";
-import { AccessPage } from "../pages/AccessPage";
 
 const drawerWidth = 278;
 type PageKey = "overview" | "datasets" | "pipeline" | "styles" | "releases" | "access";
+const DashboardPage = lazy(async () => ({
+  default: (await import("../pages/DashboardPage")).DashboardPage,
+}));
+const DatasetsPage = lazy(async () => ({
+  default: (await import("../pages/DatasetsPage")).DatasetsPage,
+}));
+const PipelinePage = lazy(async () => ({
+  default: (await import("../pages/PipelinePage")).PipelinePage,
+}));
+const ReleasesPage = lazy(async () => ({
+  default: (await import("../pages/ReleasesPage")).ReleasesPage,
+}));
+const AccessPage = lazy(async () => ({
+  default: (await import("../pages/AccessPage")).AccessPage,
+}));
 const mapLoginUrl = import.meta.env.VITE_MAP_LOGIN_URL || "http://webgis.localhost/login";
 const mapUrl = import.meta.env.VITE_WEBGIS_MAP_URL || "http://webgis.localhost/map";
 
@@ -682,24 +692,38 @@ export function AdminShell() {
 
           {/* Body Pages */}
           <Box sx={{ p: { xs: 2, sm: 3.5 }, maxWidth: 1540, mx: "auto" }}>
-            {activePage === "overview" && <DashboardPage />}
-            {activePage === "datasets" && <DatasetsPage />}
-            {activePage === "pipeline" && <PipelinePage />}
-            {activePage === "releases" && <ReleasesPage />}
-            {activePage === "access" && <AccessPage />}
-            {activePage === "styles" && (
-              <Paper
-                sx={{ maxWidth: 680, mx: "auto", mt: 5, p: { xs: 3, sm: 5 }, textAlign: "center" }}
-              >
-                <Paintbrush size={36} color="#d32f2f" />
-                <Typography variant="h5" sx={{ mt: 2, fontWeight: 750 }}>
-                  {t("styles.comingSoonTitle")}
-                </Typography>
-                <Typography color="text.secondary" sx={{ mt: 1 }}>
-                  {t("styles.comingSoonDescription")}
-                </Typography>
-              </Paper>
-            )}
+            <Suspense
+              fallback={
+                <Stack sx={{ minHeight: 240, alignItems: "center", justifyContent: "center" }}>
+                  <CircularProgress size={28} />
+                </Stack>
+              }
+            >
+              {activePage === "overview" && <DashboardPage />}
+              {activePage === "datasets" && <DatasetsPage />}
+              {activePage === "pipeline" && <PipelinePage />}
+              {activePage === "releases" && <ReleasesPage />}
+              {activePage === "access" && <AccessPage />}
+              {activePage === "styles" && (
+                <Paper
+                  sx={{
+                    maxWidth: 680,
+                    mx: "auto",
+                    mt: 5,
+                    p: { xs: 3, sm: 5 },
+                    textAlign: "center",
+                  }}
+                >
+                  <Paintbrush size={36} color="#d32f2f" />
+                  <Typography variant="h5" sx={{ mt: 2, fontWeight: 750 }}>
+                    {t("styles.comingSoonTitle")}
+                  </Typography>
+                  <Typography color="text.secondary" sx={{ mt: 1 }}>
+                    {t("styles.comingSoonDescription")}
+                  </Typography>
+                </Paper>
+              )}
+            </Suspense>
           </Box>
         </Box>
       </Box>

@@ -71,13 +71,8 @@ export function AccessPage() {
   const [saveError, setSaveError] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<Grant | null>(null);
 
-  const headers = useMemo(
-    () => (accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined),
-    [accessToken]
-  );
-
   const load = async () => {
-    if (!headers) {
+    if (!accessToken) {
       setLoading(false);
       return;
     }
@@ -85,8 +80,8 @@ export function AccessPage() {
     setLoadError(null);
     try {
       const [grantResponse, releaseResponse] = await Promise.all([
-        authenticatedFetch(`${apiRoot}/access/grants`, { headers }),
-        authenticatedFetch(`${apiRoot}/releases`, { headers }),
+        authenticatedFetch(`${apiRoot}/access/grants`),
+        authenticatedFetch(`${apiRoot}/releases`),
       ]);
       if (grantResponse.status === 503) {
         setLoadError("unavailable");
@@ -106,10 +101,10 @@ export function AccessPage() {
 
   useEffect(() => {
     void load();
-  }, [accessToken]);
+  }, [accessToken, authenticatedFetch]);
 
   useEffect(() => {
-    if (!dialogOpen || accessMode !== "restricted" || !headers) return;
+    if (!dialogOpen || accessMode !== "restricted" || !accessToken) return;
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
@@ -118,9 +113,7 @@ export function AccessPage() {
             q: subjectQuery,
             limit: "25",
           });
-          const response = await authenticatedFetch(`${apiRoot}/access/subjects?${parameters}`, {
-            headers,
-          });
+          const response = await authenticatedFetch(`${apiRoot}/access/subjects?${parameters}`);
           if (!response.ok) throw new Error("search directory");
           const payload = (await response.json()) as { items?: DirectorySubject[] };
           setSubjects(payload.items ?? []);
@@ -130,7 +123,7 @@ export function AccessPage() {
       })();
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [dialogOpen, accessMode, headers, principalType, subjectQuery]);
+  }, [dialogOpen, accessMode, accessToken, authenticatedFetch, principalType, subjectQuery]);
 
   const activeUserCount = grants.filter(
     (grant) => grant.status === "active" && grant.principalType === "user"
@@ -158,13 +151,13 @@ export function AccessPage() {
     setDialogOpen(true);
   };
   const createGrant = async () => {
-    if (!headers || !releaseID || (accessMode === "restricted" && !selectedSubject)) return;
+    if (!accessToken || !releaseID || (accessMode === "restricted" && !selectedSubject)) return;
     setSaving(true);
     setSaveError(false);
     try {
       const response = await authenticatedFetch(`${apiRoot}/access/grants`, {
         method: "POST",
-        headers: { ...headers, "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           principalType: accessMode === "public" ? "public" : principalType,
           principalId: accessMode === "public" ? "" : selectedSubject?.id,
@@ -183,13 +176,13 @@ export function AccessPage() {
     }
   };
   const revoke = async () => {
-    if (!headers || !revokeTarget) return;
+    if (!accessToken || !revokeTarget) return;
     setSaving(true);
     setSaveError(false);
     try {
       const response = await authenticatedFetch(
         `${apiRoot}/access/grants/${encodeURIComponent(revokeTarget.id)}/revoke`,
-        { method: "POST", headers }
+        { method: "POST" }
       );
       if (!response.ok) throw new Error("revoke grant");
       setRevokeTarget(null);

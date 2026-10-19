@@ -124,9 +124,7 @@ export function DatasetsPage() {
     setLoading(true);
     setLoadError(false);
     try {
-      const response = await authenticatedFetch("/api/geodata/v1/uploads?limit=100", {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      const response = await authenticatedFetch("/api/geodata/v1/uploads?limit=100");
       if (!response.ok) throw new Error("Could not load source data");
       const body = (await response.json()) as { items?: RawUpload[] };
       setItems(body.items ?? []);
@@ -135,7 +133,7 @@ export function DatasetsPage() {
     } finally {
       setLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, authenticatedFetch]);
 
   useEffect(() => {
     void loadUploads();
@@ -199,10 +197,7 @@ export function DatasetsPage() {
     try {
       const response = await authenticatedFetch(
         `/api/geodata/v1/uploads/${encodeURIComponent(deleteTarget.id)}`,
-        {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }
+        { method: "DELETE" }
       );
       if (!response.ok) throw new Error("Could not delete raw data");
       setItems((current) => current.filter((item) => item.id !== deleteTarget.id));
