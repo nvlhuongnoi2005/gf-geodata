@@ -72,7 +72,11 @@ Các nguyên tắc chính:
 - SeaweedFS S3, PostgreSQL và các Kubernetes Secret theo hướng dẫn triển khai.
 - Node.js và npm để phát triển frontend; Go theo phiên bản trong module/Dockerfile API để xây dựng service.
 
-## Chạy frontend cục bộ
+## Chạy giao diện cục bộ
+
+Phần này chỉ chạy giao diện quản trị GeoData. API upload, worker, PostgreSQL,
+SeaweedFS và Tile Gateway **không** tự được khởi động bằng lệnh dưới đây; hãy
+triển khai chúng trên Kubernetes theo phần [Cài đặt và triển khai](#cài-đặt-và-triển-khai).
 
 Sao chép `.env.example` thành `.env`, sau đó đặt URL GeoForce phù hợp với môi trường:
 
@@ -80,6 +84,11 @@ Sao chép `.env.example` thành `.env`, sau đó đặt URL GeoForce phù hợp 
 npm install
 npm run dev
 ~~~
+
+Vite sẽ dùng các URL trong `.env` để proxy xác thực và gọi các dịch vụ GeoForce
+đã có sẵn. Vì vậy, trước khi kiểm thử các thao tác upload, chuyển đổi hoặc phát
+hành từ giao diện cục bộ, cần có một môi trường GeoData/WebGIS đã triển khai và
+có thể truy cập từ máy phát triển.
 
 Các biến quan trọng:
 

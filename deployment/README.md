@@ -1,342 +1,138 @@
-# GeoData UI deployment
+# Triển khai GeoData trên Kubernetes
 
-The UI is deployed in `tile-server` and reuses WebGIS authentication through
-the `/auth` reverse proxy. Raw files are uploaded through the authenticated Go
-API and stored privately in SeaweedFS in the separate `storage` namespace. The
-browser never receives an S3 URL, object key, bucket name, or S3 credential.
+GeoData chạy ở namespace `tile-server`, dùng SeaweedFS riêng tư ở `storage` và tái sử dụng xác thực/danh bạ của WebGIS. GeoData chỉ sở hữu catalog, job, release và quyền bản đồ; WebGIS vẫn sở hữu tài khoản và JWT.
 
-## Configure credentials once
+> Manifest hiện phù hợp cho môi trường phát triển hoặc cụm một node. Production cần storage HA, sao lưu, snapshot và kế hoạch khôi phục đã kiểm thử.
 
-Before applying `deployment`, create the Secrets referenced by the manifests.
-Do not commit these credentials. Run this PowerShell in the repository root;
-it creates random S3 credentials and applies Kubernetes Secrets without writing
-them to a file. Keep the resulting values in your password manager for rotation.
+## Điều kiện cần có
 
-```powershell
+- Quyền `kubectl` với namespace `storage`, `tile-server` và `webgis`.
+- WebGIS Controller/Auth đang chạy, công bố JWKS ở `/auth/.well-known/jwks.json`.
+- CNI có thực thi `NetworkPolicy`, StorageClass cho PVC và quyền pull image GHCR.
+- Không commit mật khẩu, khóa JWT hay Secret đã điền giá trị.
+
+## 1. Tạo Secret
+
+Tạo các Secret được manifest tham chiếu trước khi apply. Mỗi identity S3 chỉ nhận quyền tối thiểu: uploader ghi `geodata-raw`; worker đọc raw và ghi `geodata-derived`; thông tin quản trị chỉ dùng cho Job tạo bucket. Chạy khối lệnh dưới đây từ thư mục gốc repository; nó tạo credential ngẫu nhiên, apply Secret mà không ghi credential vào tệp và kiểm tra bootstrap Secret trước khi tiếp tục.
+
+~~~powershell
 kubectl apply -f deployment/namespace.yaml
 kubectl create namespace storage --dry-run=client -o yaml | kubectl apply -f -
-
 $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
 try {
-  $adminKeyBytes = New-Object byte[] 10
-  $adminSecretBytes = New-Object byte[] 32
-  $uploadKeyBytes = New-Object byte[] 10
-  $uploadSecretBytes = New-Object byte[] 32
-  $workerKeyBytes = New-Object byte[] 10
-  $workerSecretBytes = New-Object byte[] 32
-  $rng.GetBytes($adminKeyBytes)
-  $rng.GetBytes($adminSecretBytes)
-  $rng.GetBytes($uploadKeyBytes)
-  $rng.GetBytes($uploadSecretBytes)
-  $rng.GetBytes($workerKeyBytes)
-  $rng.GetBytes($workerSecretBytes)
-} finally {
-  $rng.Dispose()
-}
+  $adminKeyBytes = New-Object byte[] 10; $adminSecretBytes = New-Object byte[] 32
+  $uploadKeyBytes = New-Object byte[] 10; $uploadSecretBytes = New-Object byte[] 32
+  $workerKeyBytes = New-Object byte[] 10; $workerSecretBytes = New-Object byte[] 32
+  $rng.GetBytes($adminKeyBytes); $rng.GetBytes($adminSecretBytes)
+  $rng.GetBytes($uploadKeyBytes); $rng.GetBytes($uploadSecretBytes)
+  $rng.GetBytes($workerKeyBytes); $rng.GetBytes($workerSecretBytes)
+} finally { $rng.Dispose() }
 $adminKey = [BitConverter]::ToString($adminKeyBytes).Replace('-', '')
 $adminSecret = [Convert]::ToBase64String($adminSecretBytes)
 $uploadKey = [BitConverter]::ToString($uploadKeyBytes).Replace('-', '')
 $uploadSecret = [Convert]::ToBase64String($uploadSecretBytes)
 $workerKey = [BitConverter]::ToString($workerKeyBytes).Replace('-', '')
 $workerSecret = [Convert]::ToBase64String($workerSecretBytes)
-if ([string]::IsNullOrWhiteSpace($adminKey) -or [string]::IsNullOrWhiteSpace($adminSecret) -or [string]::IsNullOrWhiteSpace($uploadKey) -or [string]::IsNullOrWhiteSpace($uploadSecret) -or [string]::IsNullOrWhiteSpace($workerKey) -or [string]::IsNullOrWhiteSpace($workerSecret)) {
-  throw 'Generated S3 credential is empty; no Secret was created.'
-}
-$config = @{
-  identities = @(
-    @{ name = 'bootstrap-admin'; credentials = @(@{ accessKey = $adminKey; secretKey = $adminSecret }); actions = @('Admin','Read','Write','List','Tagging') },
-    @{ name = 'geodata-upload'; credentials = @(@{ accessKey = $uploadKey; secretKey = $uploadSecret }); actions = @('Read','Write','List'); resources = @('buckets/geodata-raw/','buckets/geodata-derived/') },
-    @{ name = 'geodata-worker'; credentials = @(@{ accessKey = $workerKey; secretKey = $workerSecret }); actions = @('Read','Write','List'); resources = @('buckets/geodata-raw/','buckets/geodata-derived/') }
-  )
-} | ConvertTo-Json -Depth 8 -Compress
-
+if ([string]::IsNullOrWhiteSpace($adminKey) -or [string]::IsNullOrWhiteSpace($adminSecret) -or [string]::IsNullOrWhiteSpace($uploadKey) -or [string]::IsNullOrWhiteSpace($uploadSecret) -or [string]::IsNullOrWhiteSpace($workerKey) -or [string]::IsNullOrWhiteSpace($workerSecret)) { throw 'Generated S3 credential is empty; no Secret was created.' }
+$config = @{ identities = @(
+  @{ name = 'bootstrap-admin'; credentials = @(@{ accessKey = $adminKey; secretKey = $adminSecret }); actions = @('Admin','Read','Write','List','Tagging') },
+  @{ name = 'geodata-upload'; credentials = @(@{ accessKey = $uploadKey; secretKey = $uploadSecret }); actions = @('Read','Write','List'); resources = @('buckets/geodata-raw/','buckets/geodata-derived/') },
+  @{ name = 'geodata-worker'; credentials = @(@{ accessKey = $workerKey; secretKey = $workerSecret }); actions = @('Read','Write','List'); resources = @('buckets/geodata-raw/','buckets/geodata-derived/') }
+) } | ConvertTo-Json -Depth 8 -Compress
 $s3ConfigFile = New-TemporaryFile
-try {
-  [System.IO.File]::WriteAllText($s3ConfigFile.FullName, $config, (New-Object System.Text.UTF8Encoding($false)))
-  kubectl -n storage create secret generic geodata-seaweed-s3-config --from-file="s3.json=$($s3ConfigFile.FullName)" --dry-run=client -o yaml | kubectl apply -f -
-} finally {
-  Remove-Item -LiteralPath $s3ConfigFile.FullName -Force
-}
+try { [System.IO.File]::WriteAllText($s3ConfigFile.FullName, $config, (New-Object System.Text.UTF8Encoding($false))); kubectl -n storage create secret generic geodata-seaweed-s3-config --from-file="s3.json=$($s3ConfigFile.FullName)" --dry-run=client -o yaml | kubectl apply -f - } finally { Remove-Item -LiteralPath $s3ConfigFile.FullName -Force }
 kubectl -n storage create secret generic geodata-s3-bootstrap --from-literal="access-key=$adminKey" --from-literal="secret-key=$adminSecret" --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n tile-server create secret generic geodata-upload-s3 --from-literal="access-key=$uploadKey" --from-literal="secret-key=$uploadSecret" --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n tile-server create secret generic geodata-worker-s3 --from-literal="access-key=$workerKey" --from-literal="secret-key=$workerSecret" --dry-run=client -o yaml | kubectl apply -f -
-
 $bootstrapSecret = kubectl -n storage get secret geodata-s3-bootstrap -o json | ConvertFrom-Json
-if ($bootstrapSecret.data.'access-key'.Length -eq 0 -or $bootstrapSecret.data.'secret-key'.Length -eq 0) {
-  throw 'Bootstrap Secret contains an empty key; stop and recreate it before deploying.'
-}
-```
+if ($bootstrapSecret.data.'access-key'.Length -eq 0 -or $bootstrapSecret.data.'secret-key'.Length -eq 0) { throw 'Bootstrap Secret contains an empty key; stop and recreate it before deploying.' }
+~~~
 
-If an S3 credential Secret was accidentally created with blank values, use
-the checked script below. It safely rotates all application identities together and stops
-if the bootstrap Secret is empty; it never prints credential values. Then
-restart SeaweedFS and recreate the bootstrap Job:
+Khối lệnh đã tạo `geodata-upload-s3` và `geodata-worker-s3`. Tạo tiếp `geodata-upload-auth`, `geodata-webgis-directory`, `geodata-catalog-postgresql` và `ghcr-pull`; lưu credential trong password manager để có thể xoay vòng.
 
-```powershell
+`geodata-upload-auth` phải có issuer, audience và JWKS URL của WebGIS. `geodata-webgis-directory` dùng một role PostgreSQL chỉ-đọc có quyền tối thiểu trên `webgis.users`; không dùng lại mật khẩu role auth của WebGIS và không đồng bộ bảng người dùng.
+
+`geodata-catalog-postgresql` trỏ đến database `geodata` và role riêng. Tạo Secret catalog cùng Secret cache-warmer bằng script có sẵn:
+
+~~~powershell
+& .\deployment\scripts\create-geodata-catalog-postgresql-secret.ps1
+~~~
+
+Có thể dùng chung PostgreSQL server với WebGIS nhưng không thêm bảng GeoData vào database auth. Upload API chạy migration idempotent khi khởi động; không sửa tay lịch sử migration.
+
+Nếu cần xoay credential S3, dùng script thay vì sửa Secret từng phần:
+
+~~~powershell
 & .\deployment\scripts\rotate-geodata-s3-credentials.ps1
 kubectl -n storage rollout restart statefulset/seaweedfs
 kubectl -n storage rollout status statefulset/seaweedfs --timeout=10m
 kubectl -n storage delete job geodata-bucket-bootstrap --ignore-not-found
 kubectl apply -k deployment/storage
 kubectl -n storage wait --for=condition=complete job/geodata-bucket-bootstrap --timeout=5m
-```
+~~~
 
-The existing `gf-webgis` controller is the identity authority. Its JWTs are
-signed with EdDSA and expose JWKS at `/auth/.well-known/jwks.json`. The upload
-API validates the same `iss`, `aud`, expiration and admin role claim as WebGIS;
-it does not create or manage a second login system.
+## 2. Triển khai
 
-Confirm the live config values without reading any private key:
-
-```powershell
-$webgisConfig = kubectl -n webgis get configmap webgis-config -o json | ConvertFrom-Json
-$webgisConfig.data.AUTH_JWT_ISSUER
-$webgisConfig.data.AUTH_JWT_AUDIENCE
-kubectl -n webgis get service controller
-```
-
-For the current `gf-webgis` deployment, use its in-cluster Service address and
-the values configured in `webgis-config`:
-
-```powershell
-$jwksUrl = 'http://controller.webgis.svc.cluster.local:3001/auth/.well-known/jwks.json'
-$issuer = 'auth-service'
-$audience = 'api-gateway'
-kubectl -n tile-server create secret generic geodata-upload-auth --from-literal="jwks-url=$jwksUrl" --from-literal="issuer=$issuer" --from-literal="audience=$audience" --dry-run=client -o yaml | kubectl apply -f -
-```
-
-## Connect WebGIS users and organisations for map permissions
-
-GeoData does **not** copy WebGIS users. It reads only the active user directory
-from the existing `webgis.users` table and stores grants by WebGIS user UUID or
-by the existing `users.organization` value. The current WebGIS schema does not
-have a separate groups table; therefore “organisation” is the supported unit
-principal until WebGIS introduces stable organisation IDs.
-
-Create a database role with the minimum possible permission, then create the
-GeoData Secret. This runs against the WebGIS database and does not expose or
-reuse the `webgis_auth` password in GeoData:
-
-```powershell
-$directoryPassword = Read-Host 'Password for geodata_directory (store it in your secret manager)' -AsSecureString
-$directoryPasswordText = [System.Net.NetworkCredential]::new('', $directoryPassword).Password
-$directoryPasswordSql = $directoryPasswordText.Replace("'", "''")
-$directoryPasswordUrl = [uri]::EscapeDataString($directoryPasswordText)
-
-@"
-DO `$`$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'geodata_directory') THEN
-    CREATE ROLE geodata_directory LOGIN PASSWORD '$directoryPasswordSql' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
-  END IF;
-END `$`$;
-GRANT CONNECT ON DATABASE webgis TO geodata_directory;
-GRANT USAGE ON SCHEMA public TO geodata_directory;
-GRANT SELECT (id, full_name, email, organization, status) ON TABLE public.users TO geodata_directory;
-"@ | kubectl -n webgis exec -i auth-postgres-0 -- psql -U webgis_auth -d webgis -v ON_ERROR_STOP=1
-
-$directoryUrl = "postgresql://geodata_directory:$directoryPasswordUrl@auth-postgres.webgis.svc.cluster.local:5432/webgis?sslmode=disable"
-kubectl -n tile-server create secret generic geodata-webgis-directory --from-literal="database-url=$directoryUrl" --dry-run=client -o yaml | kubectl apply -f -
-Remove-Variable directoryPasswordText,directoryPasswordSql,directoryPasswordUrl,directoryUrl -ErrorAction SilentlyContinue
-
-# This resource belongs to the WebGIS database boundary, so apply it with its deployment.
-kubectl apply -f deployment/integration/webgis-auth-postgres-networkpolicy.yaml
-```
-
-The upload API uses this connection only to search and validate recipients in
-the admin access screen. The tile gateway uses it only to resolve the current
-user's organisation for a restricted map. It cannot read password hashes,
-sessions, or modify WebGIS data.
-
-## Configure the GeoData catalog database
-
-GeoData metadata is not stored in the WebGIS `db-auth` database. WebGIS remains
-the identity authority; GeoData stores only the authenticated subject internally
-for audit. This keeps authentication migrations, credentials, backup and access
-control independent from the source-data catalog.
-
-The manifests provision a dedicated `geodata` database in `tile-server`. Create
-its Kubernetes Secret once before deployment; the password is generated locally
-and is never printed by the script:
-
-```powershell
-& .\deployment\scripts\create-geodata-catalog-postgresql-secret.ps1
-```
-
-For a production shared PostgreSQL cluster, reuse the PostgreSQL _server_ if
-desired, but create a separate `geodata` database and a dedicated `geodata` role.
-Do not add GeoData tables to `db-auth` and do not synchronize tables between the
-two services.
-
-## Deploy
-
-The storage manifests create a single-node SeaweedFS installation with a 100Gi
-PVC, three private buckets (`geodata-raw`, `geodata-derived`, and
-`geodata-published`), and raw-bucket versioning. The uploader identity is scoped
-to `geodata-raw`; the conversion worker may read that bucket and write only to
-`geodata-derived`; admin credentials are only used by the one-shot bucket job.
-The S3 gRPC listener is intentionally not exposed by a Service and the storage
-NetworkPolicy only permits S3 HTTP from the upload API and bucket bootstrap Job.
-Ensure the cluster CNI enforces Kubernetes NetworkPolicy before applying.
-
-```powershell
+~~~powershell
 kubectl apply -k deployment
 kubectl -n storage rollout status statefulset/seaweedfs --timeout=10m
 kubectl -n storage wait --for=condition=complete job/geodata-bucket-bootstrap --timeout=5m
-kubectl -n tile-server rollout restart deployment/geodata-upload
-kubectl -n tile-server rollout restart deployment/geodata-worker
-kubectl -n tile-server rollout restart deployment/geodata-mbtiles-store-warmer
-kubectl -n tile-server rollout restart deployment/geodata-tile-gateway
-kubectl -n tile-server rollout restart deployment/geodata-frontend
 kubectl -n tile-server rollout status deployment/geodata-upload --timeout=5m
 kubectl -n tile-server rollout status deployment/geodata-worker --timeout=5m
 kubectl -n tile-server rollout status deployment/geodata-mbtiles-store-warmer --timeout=5m
 kubectl -n tile-server rollout status deployment/geodata-tile-gateway --timeout=5m
 kubectl -n tile-server rollout status deployment/geodata-frontend --timeout=5m
-```
+~~~
 
-Set your GHCR `ghcr-pull` Secret in `tile-server` before rollout. GitHub Actions
-publishes `geodata-upload:dev`, `geodata-worker:dev`, and `geodata-tile-gateway:dev` when `api/**` changes. The upload API enforces a
-50 GiB maximum, streams files without buffering them on the frontend, and
-supports `.osm.pbf`, GeoTIFF, GeoPackage, Shapefile ZIP, and MBTiles. Raw object
-keys are generated server-side and never returned to the browser.
+SeaweedFS tạo các bucket riêng tư `geodata-raw`, `geodata-derived` và `geodata-published`; raw bucket có versioning. Upload API giới hạn tệp 50 GiB, stream thay vì đệm toàn bộ trên trình duyệt và nhận `.osm.pbf`, GeoTIFF, GeoPackage, Shapefile ZIP và MBTiles.
 
-This is a single replica and one PVC for both SeaweedFS and PostgreSQL: it is a
-development/single-node starting point, not HA or a backup strategy. Configure
-storage-class capacity, snapshots, and tested restore before putting irreplaceable
-data there. The upload API applies its idempotent catalog migration at startup;
-every successful upload is stored in SeaweedFS and registered in PostgreSQL. The
-local ingress is available at `http://geodata.localhost`.
+CI publish `geodata-upload:dev`, `geodata-worker:dev` và `geodata-tile-gateway:dev` khi `api/**` thay đổi. Dùng tag bất biến và cập nhật manifest/GitOps khi triển khai production.
 
-Files uploaded before this catalog was introduced have no user-selected name or
-data type, so they are intentionally not inferred from S3 and do not appear in
-the catalog. Upload those files again, or add them through a future controlled
-import workflow that explicitly supplies their metadata.
+## 3. Chuyển đổi và phục vụ MBTiles
 
-## Convert an OSM PBF with Tilemaker's default schema
+Worker chuyển đổi OSM PBF bằng schema OpenMapTiles mặc định của Tilemaker. `rawUploadId` là ID trong catalog, không phải S3 key.
 
-The worker uses Tilemaker's built-in OpenMapTiles-compatible
-`config-openmaptiles.json` and `process-openmaptiles.lua`; no custom styling or
-schema is applied. Queue a conversion via the authenticated API after uploading
-the source. `rawUploadId` is the identifier shown by the source-data API, not an
-S3 key.
-
-```powershell
+~~~powershell
 $body = @{ rawUploadId = '<source-data-id>'; minZoom = 0; maxZoom = 14 } | ConvertTo-Json
 Invoke-RestMethod -Method Post -Uri 'http://geodata.localhost/api/geodata/v1/jobs' -Headers @{ Authorization = "Bearer $token" } -ContentType 'application/json' -Body $body
-```
+~~~
 
-The worker downloads the source into a short-lived `emptyDir`, writes a private
-MBTiles artifact to `geodata-derived`, and records only its internal object key
-in the catalog. Its development reservation is 512 MiB RAM, with an 8 GiB
-runtime limit and up to 50 GiB node-local temporary space. For a country-scale
-PBF, give Docker Desktop at least 10 GiB RAM (or run the worker on a dedicated
-node); lowering the reservation only makes scheduling possible and does not
-reduce Tilemaker's actual peak-memory requirement.
+Worker dùng `emptyDir` cho dữ liệu tạm, lưu artifact bất biến trong `geodata-derived`. `geodata-mbtiles-store-warmer` materialize artifact vào PVC `geodata-mbtiles-data` bằng rename nguyên tử; Tile Gateway đọc SQLite trực tiếp từ PVC, không gọi hay restart Tile Server cũ.
 
-## Direct GeoData MBTiles serving
+PBF cỡ quốc gia cần khoảng 10 GiB RAM. Với nhiều node, thay PVC `ReadWriteOnce` bằng storage RWX (NFS/CephFS) hoặc ghép warmer và gateway trên cùng node. Warmer tạo preview PNG 640×360 cho raster; preview vector hiện là placeholder vì chưa có MapLibre Native renderer kèm style, sprite và glyph.
 
-After conversion, the normal worker stores the immutable MBTiles source in
-`geodata-derived`. The `geodata-mbtiles-store-warmer` downloads it once into
-the dedicated `geodata-mbtiles-data` PVC and activates it with an atomic
-rename. The GeoData tile gateway reads that SQLite file directly; it does not
-call, copy into, restart, or wait for the existing WebGIS TileServer.
+## 4. Tích hợp WebGIS
 
-### Published-map previews
+Cấu hình Controller WebGIS:
 
-After activation in `geodata-mbtiles-data`, the same
-`geodata-mbtiles-store-warmer` claims a preview job, produces a 640×360 PNG,
-and stores it privately at `geodata-derived/previews/<artifact-id>.png`. The
-object key is never sent to WebGIS. The catalog instead contains a GeoData
-`/preview.png` URL; the gateway evaluates the published release's ACL before
-streaming it. WebGIS downloads that URL through its authenticated Controller
-proxy and displays a browser object URL, since a plain `<img>` cannot attach a
-Bearer token.
+~~~text
+GEODATA_INTERNAL_URL=http://geodata-tile-gateway.tile-server.svc.cluster.local:8091
+~~~
 
-Raster MBTiles show an actual tile. Vector MBTiles currently receive a
-deterministic placeholder image. A geographically faithful vector thumbnail
-requires a dedicated MapLibre Native renderer plus the selected style, sprite,
-and glyph assets; it is intentionally not represented as a true map render.
-Migration `014_artifact_previews.sql` queues every already-serving artifact
-once, so no manual S3 copy is needed after rollout.
+Controller kiểm tra `map:read`, chuyển tiếp bearer token và proxy catalog, TileJSON, tile, style, sprite và preview. Trình duyệt không được nhận địa chỉ nội bộ, S3 key hay đường dẫn PVC.
 
-The migration `011_geodata_mbtiles_store.sql` marks existing successful
-artifacts for one-time re-materialization. Stop the previous WebGIS cache
-warmer before applying this version, otherwise two workers can compete for the
-same artifact state:
-
-```powershell
-kubectl -n webgis scale deployment/geodata-tileserver-cache-warmer --replicas=0
+~~~powershell
+# GeoData
 kubectl apply -k deployment
-kubectl -n tile-server rollout status deployment/geodata-mbtiles-store-warmer --timeout=5m
-kubectl -n tile-server rollout status deployment/geodata-tile-gateway --timeout=5m
-```
-
-## Connect WebGIS map layers to GeoData
-
-The WebGIS Controller must use
-`http://geodata-tile-gateway.tile-server.svc.cluster.local:8091` as
-`GEODATA_INTERNAL_URL`. Its `/api/geodata/catalog` route verifies `map:read`,
-then forwards the original bearer token to GeoData. The MapLibre client uses
-that Controller route for the catalog, styles, sprites, TileJSON and tiles.
-Consequently a user sees only releases permitted by the GeoData access policy;
-the browser never receives an in-cluster address, S3 key, or serving-volume
-path.
-
-The companion changes belong in the WebGIS repository: Controller proxy,
-`GEODATA_INTERNAL_URL` config, and map-layer client adapter. Deploy both image
-updates before testing; the GeoData gateway NetworkPolicy already admits only
-the GeoData frontend and the WebGIS Controller on port 8091.
-
-```powershell
-# GeoData repository
-kubectl apply -k deployment/tile-gateway
 kubectl -n tile-server rollout restart deployment/geodata-tile-gateway
-kubectl -n tile-server rollout status deployment/geodata-tile-gateway --timeout=5m
 
-# WebGIS repository (after its Controller and frontend images are built/pushed)
+# WebGIS (sau khi build/push image của cả hai phía)
 kubectl apply -k deployment/core
 kubectl -n webgis rollout restart deployment/controller deployment/frontend
-kubectl -n webgis rollout status deployment/controller --timeout=5m
-kubectl -n webgis rollout status deployment/frontend --timeout=5m
-```
+~~~
 
-## Reuse an MBTiles artifact for a new map version
+## Vận hành và xử lý sự cố
 
-A new semantic version may reuse an unchanged, serving-ready MBTiles artifact.
-This is normal when only release metadata, style, or access policy changes.
-Migration `013_release_artifact_version_reuse.sql` removes the old
-TileServer-only uniqueness rule that blocked this workflow. Build and deploy a
-new `geodata-upload` image, then restart it so its startup migration runs:
+~~~powershell
+kubectl -n tile-server get pods
+kubectl -n storage get pods
+kubectl -n tile-server logs deployment/geodata-upload --tail=100
+kubectl -n tile-server logs deployment/geodata-tile-gateway --tail=100
+~~~
 
-```powershell
-kubectl -n tile-server rollout restart deployment/geodata-upload
-kubectl -n tile-server rollout status deployment/geodata-upload --timeout=5m
-```
+- Catalog rỗng: kiểm tra `GEODATA_INTERNAL_URL`, issuer/audience/JWKS, bearer token được Controller chuyển tiếp và role danh bạ.
+- Map không xuất hiện: release phải published, artifact phải sẵn sàng trên PVC và chính sách/grant phải khớp người gọi.
+- Không có preview: kiểm tra warmer, trạng thái `ready` và request qua Controller có Authorization header.
+- Sau thay đổi API/migration, rollout đúng workload: `geodata-upload` cho catalog hoặc `geodata-tile-gateway` cho gateway/quyền.
 
-## MapLibre release styles and sprites
-
-Migration `012_release_styles.sql` adds immutable style versions. An
-administrator can import `style.json`, `sprite.json`, `sprite.png`, and their
-optional `@2x` pair from **Map releases**, choose that style while creating a
-draft, then publish normally. The tile gateway replaces an `mbtiles://...`
-source in the stored style with the selected release artifact and streams the
-sprite through the same release authorization policy.
-
-The gateway S3 identity now needs read access to both `geodata-published` and
-`geodata-derived`; run the credential rotation script once before rolling out
-this change. The supplied OpenStreetMap style also references glyph PBF fonts.
-They are not in the provided asset directory, so this first importer preserves
-sprite icons but omits text labels safely until font-package import is added.
-
-```powershell
-& .\deployment\scripts\rotate-geodata-s3-credentials.ps1
-kubectl apply -k deployment
-kubectl -n tile-server rollout status deployment/geodata-upload --timeout=5m
-kubectl -n tile-server rollout status deployment/geodata-tile-gateway --timeout=5m
-```
-
-On the current single-node cluster, `geodata-mbtiles-data` is a 100Gi
-`ReadWriteOnce` PVC. This supports the warmer and gateway pods on that node.
-For multiple nodes, provision an RWX filesystem (for example NFS or CephFS),
-or run a node-local cache warmer and gateway together on every node. Keep
-`geodata-derived` as the immutable recovery copy in either case.
+Sao lưu PostgreSQL, bucket và PVC trước khi nạp dữ liệu không thể thay thế. Sau khi xoay credential, kiểm tra rollout trước khi thu hồi giá trị cũ.
