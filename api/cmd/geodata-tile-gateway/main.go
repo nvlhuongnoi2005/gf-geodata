@@ -175,9 +175,12 @@ func isAdmin(claims jwt.MapClaims, role string) bool {
 	return false
 }
 
+const tilesetAttribution = "© Viettel High Tech"
+
 type tileJSONResponse struct {
 	TileJSON     string          `json:"tilejson"`
 	Name         string          `json:"name"`
+	Attribution  string          `json:"attribution"`
 	Scheme       string          `json:"scheme"`
 	Format       string          `json:"format"`
 	Tiles        []string        `json:"tiles"`
@@ -254,6 +257,7 @@ func (g *gateway) catalog(w http.ResponseWriter, r *http.Request) {
 			MaxZoom:     item.Artifact.MaxZoom,
 			TileSize:    256,
 			SourceName:  item.Artifact.SourceName,
+			Attribution: tilesetAttribution,
 			Visibility:  item.Release.Visibility,
 		})
 	}
@@ -282,6 +286,7 @@ type mapCatalogItem struct {
 	MaxZoom     int    `json:"maxZoom"`
 	TileSize    int    `json:"tileSize"`
 	SourceName  string `json:"sourceName"`
+	Attribution string `json:"attribution"`
 	Visibility  string `json:"visibility"`
 }
 
@@ -351,7 +356,7 @@ func (g *gateway) tileJSON(w http.ResponseWriter, r *http.Request) {
 		if a.ArtifactID == r.PathValue("artifactID") {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(tileJSONResponse{
-				TileJSON: "3.0.0", Name: a.SourceName, Scheme: "xyz", Format: a.TileFormat,
+				TileJSON: "3.0.0", Name: a.SourceName, Attribution: tilesetAttribution, Scheme: "xyz", Format: a.TileFormat,
 				Tiles:  []string{"/tiles/v1/releases/" + r.PathValue("slug") + "/tiles/" + a.ArtifactID + "/{z}/{x}/{y}"},
 				Bounds: defaultJSON(a.Bounds, "[-180,-85.051129,180,85.051129]"), MinZoom: a.MinZoom, MaxZoom: a.MaxZoom,
 				VectorLayers: defaultJSON(a.VectorLayers, "[]"),

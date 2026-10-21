@@ -996,6 +996,12 @@ func (s *server) checkCatalog(parent context.Context, response *summaryResponse)
 	response.Jobs.Queued = jobs.Queued
 	response.Jobs.Running = jobs.Running
 	response.Jobs.Failed = jobs.Failed
+	releases, err := s.store.CountPublishedReleases(ctx)
+	if err != nil {
+		slog.Warn("catalog published release count failed", "error", err)
+		return serviceDegraded
+	}
+	response.Releases = releases
 	return serviceReady
 }
 

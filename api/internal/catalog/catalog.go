@@ -270,6 +270,15 @@ func (s *Store) CountRawUploads(ctx context.Context) (int, error) {
 	return count, err
 }
 
+// CountPublishedReleases returns the maps that are available to viewers. Draft,
+// publishing, failed, and archived releases are intentionally excluded because
+// they are not map releases yet from the dashboard's perspective.
+func (s *Store) CountPublishedReleases(ctx context.Context) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM map_releases WHERE status = 'published'").Scan(&count)
+	return count, err
+}
+
 func (s *Store) JobCounts(ctx context.Context) (JobCounts, error) {
 	var counts JobCounts
 	err := s.pool.QueryRow(ctx, `
